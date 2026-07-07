@@ -8,40 +8,61 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const router = useRouter();
   const [recent, setRecent] = useState([]);
+  const [foundTopics, setFoundTopics] = useState([]);
 
-  useEffect(() => {
-    const stored = JSON.parse(localStorage.getItem("recent") || "[]");
-    setRecent(stored);
-  }, []);
-
-  const handleKeyDown = (e) => {
+  const handleSearch = async (e) => {
     if (e.key !== "Enter") return;
 
     e.preventDefault();
 
     const cleaned = query.toLowerCase().trim();
 
-    const slug = slugify(cleaned);
-
-    if (!slug) {
+    if (!cleaned) {
       alert("Please enter a valid topic.");
       return;
     }
 
-    const updated = [cleaned, ...recent.filter((t) => t !== cleaned)];
+    let topics;
+    try {
+      const res = await fetch("/api/detect-topics", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: cleaned }),
+      });
 
-    setRecent(updated);
-    localStorage.setItem("recent", JSON.stringify(updated.slice(0, 5)));
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Request failed");
+      }
 
-    router.push(`/article/${slug}`);
-  };
+      const json = await res.json();
+      topics = json.topics;
+    } catch (err) {
+      console.error("Error detecting topics:", err);
+      topics = [cleaned];
+    }
 
-  const removeRecent = (itemToRemove) => {
-    const existing = JSON.parse(localStorage.getItem("recent") || "[]");
-    const updated = existing.filter((item) => item !== itemToRemove);
+    if (topics.length === 0) {
+      alert("Couldn't find a clear topic in that search. Try being more specific.");
+      return;
+    }
 
-    localStorage.setItem("recent", JSON.stringify(updated));
-    setRecent(updated);
+    setFoundTopics(topics);
+
+    fetch("/api/process-topics", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ topics }),
+    })
+      .then((res) => res.json())
+      .then((data) => console.log(data))
+      .catch((err) => {
+        console.error("Error processing topics:", err);
+      });
   };
 
   return (
@@ -61,39 +82,27 @@ export default function Home() {
           placeholder="Search a topic..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
+          onKeyDown={handleSearch}
         />
       </div>
 
-      {/* Recent Searches List */}
-      {recent?.map((item, i) => (
-        <div
-          key={i}
-          className="flex items-center gap-2 px-3 py-1 bg-gray-800 rounded mt-2"
-        >
-          {/* Navigate to article when clicking the search term */}
-          <button
-            onClick={() =>
-              router.push(`/article/${slugify(item)}`)
-            }
-            className="hover:underline cursor-pointer"
-          >
-            {item}
-          </button>
-
-          {/* Remove button to delete from recent searches */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              removeRecent(item);
-            }}
-            className="text-gray-400 hover:text-red-400 text-sm cursor-pointer"
-            title="Remove from recent searches"
-          >
-            ×
-          </button>
+      {/* Found Topics List */}
+      {foundTopics.length > 0 && (
+        <div className="mt-8 w-full max-w-xl">
+          <p className="text-gray-400 text-sm mb-2">Found topics:</p>
+          <div className="flex flex-wrap gap-2">
+            {foundTopics.map((topic, i) => (
+              <button
+                key={i}
+                onClick={() => (console.log(`Go to ${topic}`))}
+                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-sm cursor-pointer"
+              >
+                {topic}
+              </button>
+            ))}
+          </div>
         </div>
-      ))}
+      )}
     </main>
   );
 }
