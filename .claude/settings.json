@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(../**)",
+      "Read(~/**)",
+      "Read(/.env*)",
+      "Read(./secrets/**)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ]
+  }
+}

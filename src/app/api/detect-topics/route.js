@@ -1,65 +1,39 @@
+import { callGemini } from "../../../lib/geminiClient";
+
 async function detectTopics(query) {
+  const GEMINI_MODEL = "gemini-3.1-flash-lite";
+
   const prompt = `
   You extract the main encyclopedia-style topic(s) from a search query.
 
   Query: "${query}"
 
   Return ONLY valid JSON (no markdown, no explanation):
-
-  {
-    "topics": string[]
-  }
+  { "topics": string[] }
 
   Rules:
-  - A valid topic is something that could plausibly be its own encyclopedia
-    article (a person, place, concept, event, object, etc).
-  - Do NOT extract themes, angles, qualities, or scoping context as topics
-    (e.g. "effects", "daily life", "implications", "in Britain"). These
-    narrow or contextualize a topic but are not topics themselves.
-  - Only return more than one topic if the query is genuinely asking about
-    the relationship between two independent subjects — i.e. removing
-    either term would gut the question entirely, not just narrow it.
-    Test: "industrial revolution in Britain" -> removing "Britain" still
-    leaves a coherent, still-relevant question (just broader). One topic:
-    ["industrial revolution"]. "Gravity and electromagnetism" -> removing
-    either term destroys the actual question being asked. Two topics:
-    ["gravity", "electromagnetism"].
-  - If the query is too vague to extract any real topic, return an empty
-    array rather than guessing.
-  - Only extract topics explicitly named or unambiguously implied. Do not
-    infer related entities that aren't actually mentioned (e.g. don't add
-    "SpaceX" or "Tesla" just because "Elon Musk's companies" was the query
-    — that inference belongs to a later stage, not this one).
-  - Preserve natural casing/spelling for each topic (don't slugify here).
-  - if returning multiple topics, order them by how central each is to the 
-    query, with the most central topic first.
+  - A topic is something that could be its own encyclopedia article (person, place, concept, event, object). Don't extract themes/angles/scoping context (e.g. "effects", "in Britain") as topics.
+  - Multiple topics only if removing either one would gut the question, not just narrow it (e.g. "gravity and electromagnetism" -> both; "industrial revolution in Britain" -> just ["industrial revolution"]).
+  - Empty array if query is too vague to extract a real topic.
+  - Only extract what's explicitly named — don't infer related entities (e.g. "Elon Musk's companies" ≠ add "Tesla").
+  - Preserve natural casing. Order by centrality, most central first.
+
+  Descriptions vs. real titles: queries are often descriptions of a topic
+  rather than its actual article title (e.g. "[aspect] of [entity]", "fall of
+  [entity]"). Collapse these to the ENTITY, even for well-known events:
+  - "economics of the USSR" -> "Soviet Union"
+  - "fall of the USSR" -> "Soviet Union"
+  - "fall of Rome" -> "Rome"
+
+  Exception: if the query itself IS a real standalone article title, keep it as-is:
+  - "Cold War" -> "Cold War"
+  - "Fall of Constantinople" -> "Fall of Constantinople"
+
+  If unsure whether something is a real title or just a description, default to collapsing to the entity.
   `;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(
-      "Gemini API request failed:",
-      response.status,
-      response.statusText,
-      errorText
-    );
-    throw new Error("Gemini API request failed");
-  }
-
-  const data = await response.json();
+  const data = await callGemini({ prompt, model: GEMINI_MODEL });
+  
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {
