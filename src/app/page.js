@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { slugify } from "../lib/slugify";
-import { getUserId } from "../lib/getUserId"
+import { getUserId } from "../lib/getUserId";
+import RecentArticles from "../app/components/RecentArticles";
+import PipelineSteps from "../app/components/PipelineSteps";
 
 export default function Home() {
   const [query, setQuery] = useState("");
   const router = useRouter();
-  const [recent, setRecent] = useState([]);
   const [foundTopics, setFoundTopics] = useState([]);
+  const [pipelineStep, setPipelineStep] = useState(null); // null = idle
+  const [failedStep, setFailedStep] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
+  const [devStatus, setDevStatus] = useState(null);
 
   const handleSearch = async (e) => {
     if (e.key !== "Enter") return;
@@ -19,11 +23,18 @@ export default function Home() {
     const cleaned = query.toLowerCase().trim();
 
     if (!cleaned) {
-      alert("Please enter a valid topic.");
+      setErrorMessage("Please enter a valid topic.");
       return;
     }
 
+    setErrorMessage(null);
+    setFailedStep(null);
+    setDevStatus(null);
+    setFoundTopics([]);
+
+    // --- Stage 1: detect-topics ---
     let topics;
+    setPipelineStep("detect-topics");
     try {
       const res = await fetch("/api/detect-topics", {
         method: "POST",
@@ -45,14 +56,17 @@ export default function Home() {
       topics = [cleaned];
     }
 
-    if (topics.length === 0) {
-      alert("Couldn't find a clear topic in that search. Try being more specific.");
+    if (!topics || topics.length === 0) {
+      setFailedStep("detect-topics");
+      setErrorMessage("Couldn't find a clear topic in that search. Try being more specific.");
       return;
     }
 
     setFoundTopics(topics);
 
-    try { 
+    // --- Stage 2: process-topics ---
+    setPipelineStep("process-topics");
+    try {
       const processRes = await fetch("/api/process-topics", {
         method: "POST",
         headers: {
@@ -63,17 +77,20 @@ export default function Home() {
 
       if (!processRes.ok) {
         const err = await processRes.json();
-        throw new Error(err.error || "process-topic failed");
+        throw new Error(err.error || "process-topics failed");
       }
 
-      const processData = await processRes.json();
-      console.log(processData)
+      await processRes.json();
     } catch (err) {
-      console.error("Error in topic processing pipeline:", err)
+      console.error("Error in topic processing pipeline:", err);
+      setFailedStep("process-topics");
+      setErrorMessage(err.message);
       return;
-    }  
-    
-    let relevantTopics;
+    }
+
+    // --- Stage 3: detect-relevance ---
+    let relevantSections, currentDevStatus;
+    setPipelineStep("detect-relevance");
     try {
       const relevanceRes = await fetch("/api/detect-relevance", {
         method: "POST",
@@ -83,7 +100,7 @@ export default function Home() {
         body: JSON.stringify({
           topics,
           query: cleaned,
-        })
+        }),
       });
 
       if (!relevanceRes.ok) {
@@ -92,13 +109,18 @@ export default function Home() {
       }
 
       const relevanceData = await relevanceRes.json();
-      relevantTopics = relevanceData.relevantSections;
-      console.log(relevantTopics)
+      relevantSections = relevanceData.relevantSections;
+      currentDevStatus = relevanceData.developmentSourceStatus;
+      setDevStatus(currentDevStatus);
     } catch (err) {
       console.error("Error detecting relevance:", err);
+      setFailedStep("detect-relevance");
+      setErrorMessage(err.message);
       return;
     }
 
+    // --- Stage 4: create-user-article ---
+    setPipelineStep("create-user-article");
     try {
       const createRes = await fetch("/api/create-user-article", {
         method: "POST",
@@ -106,9 +128,10 @@ export default function Home() {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          topics: relevantTopics,
+          topics: relevantSections,
           query: cleaned,
           userId: getUserId(),
+          devStatus: currentDevStatus,
         }),
       });
 
@@ -118,9 +141,12 @@ export default function Home() {
       }
 
       const createData = await createRes.json();
+      setPipelineStep("done");
       router.push(`/article/${createData.articleId}`);
     } catch (err) {
       console.error("Error creating user article:", err);
+      setFailedStep("create-user-article");
+      setErrorMessage(err.message);
     }
   };
 
@@ -145,6 +171,23 @@ export default function Home() {
         />
       </div>
 
+      {errorMessage && (
+        <p className="mt-4 text-red-400 text-sm max-w-xl text-center">{errorMessage}</p>
+      )}
+
+      {/* Pipeline progress */}
+      {pipelineStep && pipelineStep !== "done" && (
+        <div className="mt-6 w-full max-w-xl">
+          <PipelineSteps
+            currentStep={pipelineStep}
+            failedStep={failedStep}
+            devStatus={devStatus}
+          />
+        </div>
+      )}
+
+      <RecentArticles />
+
       {/* Found Topics List */}
       {foundTopics.length > 0 && (
         <div className="mt-8 w-full max-w-xl">
@@ -153,7 +196,7 @@ export default function Home() {
             {foundTopics.map((topic, i) => (
               <button
                 key={i}
-                onClick={() => (console.log(`Go to ${topic}`))}
+                onClick={() => console.log(`Go to ${topic}`)}
                 className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-sm cursor-pointer"
               >
                 {topic}

@@ -1,6 +1,7 @@
 // components/article/ArticleView.jsx
 import { slugify } from "../../lib/slugify";
 import Link from "next/link";
+import SaveArticleButton from "./SaveArticleButton";
 
 function BackButton() {
   return (
@@ -51,12 +52,15 @@ function TableOfContents({ sections }) {
   );
 }
 
-function ArticleBody({ article }) {
+function ArticleBody({ article, articleId }) {
   return (
     <article className="max-w-3xl">
-      <h1 className="text-4xl font-bold tracking-tight border-b border-gray-700 pb-4 mb-8">
-        {article.title}
-      </h1>
+      <div className="flex items-center justify-between gap-4 border-b border-gray-700 pb-4 mb-8">
+        <h1 className="text-4xl font-bold tracking-tight">
+          {article.title}
+        </h1>
+        <SaveArticleButton articleId={articleId} />
+      </div>
 
       {article.sections.map((s) => {
         const slug = slugify(s.heading);
@@ -88,7 +92,7 @@ function ArticleChatPanel() {
   );
 }
 
-export default function ArticleView({ article }) {
+export default function ArticleView({ article, articleId }) {
   if (!article || !Array.isArray(article.sections)) return null;
 
   return (
@@ -100,7 +104,7 @@ export default function ArticleView({ article }) {
             <BackButton />
             <TableOfContents sections={article.sections} />
           </div>
-          <ArticleBody article={article} />
+          <ArticleBody article={article} articleId={articleId} />
         </div>
 
         {/* Right: Chat — narrowed from 1/2 to 2/5 */}

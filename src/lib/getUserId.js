@@ -4,7 +4,7 @@ export function getUserId() {
     let userId = localStorage.getItem("wikai_user_id");
     if (!userId) {
         userId = crypto.randomUUID();
-        localStorage.setItem("wikai_user_ud", userId);
+        localStorage.setItem("wikai_user_id", userId);
     }
     return userId;
 }

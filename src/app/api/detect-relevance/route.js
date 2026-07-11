@@ -116,7 +116,18 @@ export async function POST(req) {
 
   try {
     const relevantSections = await detectRelevance(query.trim(), articles);
-    return Response.json({ relevantSections });
+    
+    const developmentSourceStatus =
+      relevantSections.length > 0 ? "grounded" : "no-relevant-sections";
+
+    if (developmentSourceStatus === "no-relevant-sections") {
+      console.log("[detect-relevance] no relevant sections", {
+        query: query.trim(),
+        topics: articles.map((a) => a.topic),
+      });
+    }
+
+    return Response.json({ relevantSections, developmentSourceStatus });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
   }

@@ -18,8 +18,8 @@ function buildSourceText(relevantTopics, cachedArticles) {
     .join("\n\n");
 }
 
-async function createUserArticle(query, sourceText) {
-  const prompt = `
+function buildGroundedPrompt(query, sourceText) {
+  return `
   You are a Wikipedia-style expert writer synthesizing a focused answer to a user's query, using only the source material below.
 
   Query: "${query}"
@@ -44,6 +44,35 @@ async function createUserArticle(query, sourceText) {
   - Mark each section's "sourceStatus": "source" if drawn entirely from the source material, "generated" if it had no coverage in the source and you wrote it from general knowledge, "hybrid" if it mixes both.
   - Write concise but informative paragraphs.
   `;
+}
+
+function buildUngroundedPrompt(query) {
+  return `
+  You are a Wikipedia-style expert writer answering a user's query from your own general knowledge. No source material was available for this query.
+
+  Query: "${query}"
+
+  Return ONLY valid JSON (no markdown, no explanation):
+  {
+    "title": string,
+    "sections": [
+      { "heading": string, "content": string, "sourceStatus": "generated" }
+    ]
+  }
+
+  Guidelines:
+  - Write a single coherent, accurate article that directly answers the query.
+  - Every section is written from general knowledge, so every "sourceStatus" must be "generated" — do not use "source" or "hybrid".
+  - Be upfront in tone and content that this reflects general knowledge rather than a specific cited source; do not fabricate specifics (dates, figures, quotes) you're not confident in.
+  - Organize into natural sections. Write concise but informative paragraphs.
+  `;
+}
+
+async function createUserArticle(query, sourceText, devStatus) {
+  const isGrounded = devStatus === "grounded";
+  const prompt = isGrounded
+    ? buildGroundedPrompt(query, sourceText)
+    : buildUngroundedPrompt(query);
 
   const data = await callGemini({ prompt, model: GEMINI_MODEL });
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -91,7 +120,7 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { query, topics, userId } = body;
+  const { query, topics, userId, devStatus } = body;
 
   if (!userId || typeof userId !== "string") {
     return Response.json({ error: "Missing userId" }, { status: 400 });
@@ -101,33 +130,38 @@ export async function POST(req) {
     return Response.json({ error: "Missing query" }, { status: 400 });
   }
 
-  if (!Array.isArray(topics) || topics.length === 0) {
-    return Response.json({ error: "No relevant topics provided" }, { status: 400 });
-  }
-
   const cleanedQuery = query.trim();
+  const isGrounded = devStatus === "grounded";
 
-  const uniqueTopicNames = [...new Set(topics.map((t) => t.topic))];
+  let sourceText = "";
 
-  const cachedArticles = {};
-  await Promise.all(
-    uniqueTopicNames.map(async (name) => {
-      const cached = await getCachedArticle(name);
-      if (cached) cachedArticles[name] = cached;
-    })
-  );
+  if (isGrounded) {
+    if (!Array.isArray(topics)) {
+      return Response.json({ error: "topics must be an array" }, { status: 400 });
+    }
 
-  const sourceText = buildSourceText(topics, cachedArticles);
+    const uniqueTopicNames = [...new Set(topics.map((t) => t.topic))];
 
-  if (!sourceText) {
-    return Response.json({ error: "No matching cached sections found" }, { status: 404 });
+    const cachedArticles = {};
+    await Promise.all(
+      uniqueTopicNames.map(async (name) => {
+        const cached = await getCachedArticle(name);
+        if (cached) cachedArticles[name] = cached;
+      })
+    );
+
+    sourceText = buildSourceText(topics, cachedArticles);
+
+    if (!sourceText) {
+      return Response.json({ error: "No matching cached sections found" }, { status: 404 });
+    }
   }
 
   try {
-    const article = await createUserArticle(cleanedQuery, sourceText);
+    const article = await createUserArticle(cleanedQuery, sourceText, devStatus);
     const articleId = await setCachedUserArticle(userId, cleanedQuery, article);
 
-    return Response.json({ article, articleId, status: "generated" });
+    return Response.json({ article, articleId, status: "generated", devStatus });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });
   }

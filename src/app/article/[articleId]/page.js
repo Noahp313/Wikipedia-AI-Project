@@ -11,5 +11,5 @@ export default async function ArticlePage({ params }) {
         notFound();
     }
 
-    return <ArticleView article={article} />;
+    return <ArticleView article={article} articleId={articleId} />;
 }

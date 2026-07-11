@@ -30,7 +30,7 @@ export async function setCachedUserArticle(userId, query, article) {
     const articleId = randomUUID();
     try {
         await redis.set(`user-article:${articleId}`, { ...article, query, userId }, { ex: CACHE_TTL_SECONDS });
-        await redis.lpush(`user-articles:${userId}`, articleId);
+        // No longer auto-saving to user-articles list — saving is now explicit via saveUserArticle()
         return articleId;
     } catch (err) {
         console.error(`Error setting cached user article for ${userId}:`, err);
@@ -54,5 +54,46 @@ export async function getUserArticleIds(userId) {
     } catch (err) {
         console.error(`Error fetching article list for ${userId}:`, err);
         return [];
+    }
+}
+
+export async function deleteUserArticle(userId, articleId) {
+  try {
+    await redis.lrem(`user-articles:${userId}`, 0, articleId);
+    await redis.del(`user-article:${articleId}`);
+    return true;
+  } catch (err) {
+    console.error(`Error deleting article ${articleId} for ${userId}:`, err);
+    return false;
+  }
+}
+
+export async function saveUserArticle(userId, articleId) {
+    try {
+        await redis.lpush(`user-articles:${userId}`, articleId);
+        return true;
+    } catch (err) {
+        console.error(`Error saving article ${articleId} for ${userId}:`, err);
+        return false;
+    }
+}
+
+export async function unsaveUserArticle(userId, articleId) {
+    try {
+        await redis.lrem(`user-articles:${userId}`, 0, articleId);
+        return true;
+    } catch (err) {
+        console.error(`Error unsaving article ${articleId} for ${userId}:`, err);
+        return false;
+    }
+}
+
+export async function isArticleSaved(userId, articleId) {
+    try {
+        const ids = await redis.lrange(`user-articles:${userId}`, 0, -1);
+        return ids.includes(articleId);
+    } catch (err) {
+        console.error(`Error checking saved status for ${articleId}:`, err);
+        return false;
     }
 }
