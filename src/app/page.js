@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { slugify } from "../lib/slugify";
+import { getUserId } from "../lib/getUserId"
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -51,18 +52,76 @@ export default function Home() {
 
     setFoundTopics(topics);
 
-    fetch("/api/process-topics", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ topics }),
-    })
-      .then((res) => res.json())
-      .then((data) => console.log(data))
-      .catch((err) => {
-        console.error("Error processing topics:", err);
+    try { 
+      const processRes = await fetch("/api/process-topics", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ topics }),
       });
+
+      if (!processRes.ok) {
+        const err = await processRes.json();
+        throw new Error(err.error || "process-topic failed");
+      }
+
+      const processData = await processRes.json();
+      console.log(processData)
+    } catch (err) {
+      console.error("Error in topic processing pipeline:", err)
+      return;
+    }  
+    
+    let relevantTopics;
+    try {
+      const relevanceRes = await fetch("/api/detect-relevance", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          topics,
+          query: cleaned,
+        })
+      });
+
+      if (!relevanceRes.ok) {
+        const err = await relevanceRes.json();
+        throw new Error(err.error || "detect-relevance failed");
+      }
+
+      const relevanceData = await relevanceRes.json();
+      relevantTopics = relevanceData.relevantSections;
+      console.log(relevantTopics)
+    } catch (err) {
+      console.error("Error detecting relevance:", err);
+      return;
+    }
+
+    try {
+      const createRes = await fetch("/api/create-user-article", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          topics: relevantTopics,
+          query: cleaned,
+          userId: getUserId(),
+        }),
+      });
+
+      if (!createRes.ok) {
+        const err = await createRes.json();
+        throw new Error(err.error || "create-user-article failed");
+      }
+
+      const createData = await createRes.json();
+      router.push(`/article/${createData.articleId}`);
+    } catch (err) {
+      console.error("Error creating user article:", err);
+    }
   };
 
   return (

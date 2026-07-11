@@ -2,7 +2,7 @@ import { fetchWikipediaContent } from "../lib/wikipedia";
 import { parseSections, buildSourceText } from "../lib/wikiSections";
 import { callGemini } from "../lib/geminiClient"
 
-const GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_MODEL = "gemini-3.1-flash-lite";
 
 export async function generateArticleForTopic(topic) {
     let sourceText = null;
@@ -49,6 +49,7 @@ export async function generateArticleForTopic(topic) {
     - Section titles should be natural (e.g. "History", "Applications", "Causes", "Design", etc.)
     - Adapt sections to the topic (do NOT use fixed headings)
     - Write concise but informative paragraphs
+    - Make the first sentence of every section a topic sentence
     - Mark each section's "sourceStatus": "wikipedia" if drawn entirely from the source material, "generated" if it had no coverage in the source and you wrote it from general knowledge, "hybrid" if it mixes both
     - If the source material for a section is marked [TRUNCATED] or is only a partial summary, treat it as a starting point and complete the section using general knowledge, marking that section "hybrid"
     - Never state something as fact if it isn't supported by the source material or well-established general knowledge
