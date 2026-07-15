@@ -119,6 +119,8 @@ export default function Home() {
       return;
     }
 
+    console.log(relevantSections);
+
     // --- Stage 4: create-user-article ---
     setPipelineStep("create-user-article");
     try {

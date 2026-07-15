@@ -3,24 +3,6 @@ import { generateArticleForTopic } from "../../../lib/generateArticle";
 import { getCachedArticle, setCachedArticle } from "../../../lib/cache";
 
 const MAX_CONCURRENT = 2; // tune based on your Gemini tier's rate limit
-const MAX_RETRIES = 2;
-const RETRY_DELAY_MS = 1000;
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function generateWithRetry(topic, attempt = 0) {
-  try {
-    return await generateArticleForTopic(topic);
-  } catch (err) {
-    if (attempt < MAX_RETRIES) {
-      await sleep(RETRY_DELAY_MS * (attempt + 1)); // simple linear backoff
-      return generateWithRetry(topic, attempt + 1);
-    }
-    throw err;
-  }
-}
 
 async function processTopic(topic) {
   const cached = await getCachedArticle(topic);
@@ -28,7 +10,9 @@ async function processTopic(topic) {
     return { topic, status: "cache-hit" };
   }
 
-  const article = await generateWithRetry(topic);
+  // Retry/backoff/model-fallback all live in callGemini (geminiClient.js) now —
+  // whatever it throws here is final for this topic.
+  const article = await generateArticleForTopic(topic);
   await setCachedArticle(topic, article);
 
   return {

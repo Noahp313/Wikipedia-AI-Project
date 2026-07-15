@@ -134,13 +134,14 @@ export async function POST(req) {
   const isGrounded = devStatus === "grounded";
 
   let sourceText = "";
+  let uniqueTopicNames = [];
 
   if (isGrounded) {
     if (!Array.isArray(topics)) {
       return Response.json({ error: "topics must be an array" }, { status: 400 });
     }
 
-    const uniqueTopicNames = [...new Set(topics.map((t) => t.topic))];
+    uniqueTopicNames = [...new Set(topics.map((t) => t.topic))];
 
     const cachedArticles = {};
     await Promise.all(
@@ -159,6 +160,9 @@ export async function POST(req) {
 
   try {
     const article = await createUserArticle(cleanedQuery, sourceText, devStatus);
+
+    article.sourceTopics = uniqueTopicNames;
+
     const articleId = await setCachedUserArticle(userId, cleanedQuery, article);
 
     return Response.json({ article, articleId, status: "generated", devStatus });
