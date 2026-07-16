@@ -48,6 +48,23 @@ export async function getCachedUserArticle(articleId) {
     }
 }
 
+export async function updateCachedUserArticle(articleId, patch) {
+    try {
+        const existing = await redis.get(`user-article:${articleId}`);
+        if (!existing) {
+            console.error(`Cannot update article ${articleId}: not found`);
+            return null;
+        }
+
+        const updated = { ...existing, ...patch };
+        await redis.set(`user-article:${articleId}`, updated, { ex: CACHE_TTL_SECONDS });
+        return updated;
+    } catch (err) {
+        console.error(`Error updating cached user article ${articleId}:`, err);
+        return null;
+    }
+}
+
 export async function getUserArticleIds(userId) {
     try {
         return await redis.lrange(`user-articles:${userId}`, 0, -1);

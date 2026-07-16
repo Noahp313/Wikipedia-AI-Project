@@ -1,10 +1,11 @@
 // components/article/ArticleView.jsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { slugify } from "../../lib/slugify";
 import Link from "next/link";
 import SaveArticleButton from "./SaveArticleButton";
+import { updateArticleAction } from "../../lib/actions/updateArticle";
 
 function BackButton() {
   return (
@@ -74,31 +75,37 @@ function UsedTopics({ topics }) {
   );
 }
 
-function ArticleBody({ article, articleId }) {
+function ArticleBody({ article, articleId, highlightedHeadings = [] }) {
   return (
     <article className="max-w-3xl">
       <div className="flex items-center justify-between gap-4 border-b border-gray-700 pb-4 mb-8">
-        <h1 className="text-4xl font-bold tracking-tight">
-          {article.title}
-        </h1>
+        <h1 className="text-4xl font-bold tracking-tight">{article.title}</h1>
         <SaveArticleButton articleId={articleId} />
       </div>
 
       {article.sections.map((s) => {
         const slug = slugify(s.heading);
         const { label, color } = sourceStatusStyle(s.sourceStatus);
+        const isChanged = highlightedHeadings.includes(s.heading);
+
         return (
-          <section id={slug} key={slug} className="mb-8 scroll-mt-10">
+          <section
+            id={slug}
+            key={slug}
+            className={`mb-8 scroll-mt-10 rounded-md transition-colors duration-1000 ${
+              isChanged ? "bg-blue-500/10 ring-1 ring-blue-500/40 p-3 -m-3" : ""
+            }`}
+          >
             <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-2xl font-semibold">{s.heading}</h2>
-              <span
-                className={`w-2 h-2 rounded-full ${color}`}
-                title={label}
-              />
+              <h2 className={`text-2xl ${isChanged ? "font-bold text-blue-100" : "font-semibold"}`}>
+                {s.heading}
+                {isChanged && (
+                  <span className="ml-2 align-middle text-xs font-normal text-blue-400">Updated</span>
+                )}
+              </h2>
+              <span className={`w-2 h-2 rounded-full ${color}`} title={label} />
             </div>
-            <p className="text-gray-200 leading-relaxed whitespace-pre-line">
-              {s.content}
-            </p>
+            <p className="text-gray-200 leading-relaxed whitespace-pre-line">{s.content}</p>
           </section>
         );
       })}
@@ -123,7 +130,7 @@ function ChatMessage({ role, content }) {
   );
 }
 
-function ArticleChatPanel({ articleId, article, onArticleUpdate }) {
+function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChanged }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -142,6 +149,21 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate }) {
     }
 
     return res.json(); // { relevantSections, chatContextStatus }
+  };
+
+  const getAnswer = async ({ query, history, relevantSections, chatContextStatus, currentArticle }) => {
+    const res = await fetch("/api/chatbot-answer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, history, relevantSections, chatContextStatus, currentArticle }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || "chatbot-answer request failed");
+    }
+
+    return res.json(); // { answer, article, articleChanged }
   };
 
   const handleSend = async (e) => {
@@ -228,34 +250,55 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate }) {
       }
 
       // Relevance detection against whatever topics are in play now
+      let relevantSections = [];
+      let chatContextStatus = "no-relevant-sections";
+
       try {
-        const { relevantSections, chatContextStatus } = await detectRelevance({
+        const relevance = await detectRelevance({
           query: trimmed,
           usedTopics,
           history: historyForCall,
           currentTopic: article.title,
         });
-
-        console.log("[chat] relevance result", chatContextStatus, relevantSections);
-
-        // TODO: hand relevantSections + chatContextStatus off to the actual
-        // response-generation route once it exists. Placeholder for now:
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content:
-              chatContextStatus === "grounded"
-                ? `Found ${relevantSections.length} relevant section(s) to answer from.`
-                : "I couldn't find anything relevant to that in the article yet.",
-          },
-        ]);
+        relevantSections = relevance.relevantSections;
+        chatContextStatus = relevance.chatContextStatus;
       } catch (err) {
         console.error("Relevance detection failed:", err);
         setError(err.message);
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: "Something went wrong while figuring out what's relevant. Please try again." },
+        ]);
+        return;
+      }
+
+      // Answer the question and apply any article edits — but only persist
+      // a new article reference when something actually changed, so pure
+      // Q&A turns don't trigger a redundant Redis write via the effect below.
+      try {
+        const { answer, article: updatedArticle, articleChanged, changedHeadings } = await getAnswer({
+          query: trimmed,
+          history: historyForCall,
+          relevantSections,
+          chatContextStatus,
+          currentArticle: article,
+        });
+
+        setMessages((prev) => [...prev, { role: "assistant", content: answer }]);
+
+        if (articleChanged) {
+          onArticleUpdate((prevArticle) => ({
+            ...updatedArticle,
+            sourceTopics: prevArticle.sourceTopics,
+          }));
+          onSectionsChanged?.(changedHeadings || []);
+        }
+      } catch (err) {
+        console.error("Answer generation failed:", err);
+        setError(err.message);
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: "Something went wrong while answering that. Please try again." },
         ]);
       }
     } catch (err) {
@@ -320,28 +363,48 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate }) {
 
 export default function ArticleView({ article: initialArticle, articleId }) {
   const [article, setArticle] = useState(initialArticle);
+  const [highlightedHeadings, setHighlightedHeadings] = useState([]);
+  const isFirstRender = useRef(true);
 
   if (!article || !Array.isArray(article.sections)) return null;
+
+  const handleArticleUpdate = (updater) => {
+    setArticle((prev) => (typeof updater === "function" ? updater(prev) : updater));
+  };
+
+  const handleSectionsChanged = (headings) => {
+    setHighlightedHeadings(headings);
+    // clear after a few seconds so the highlight doesn't linger forever
+    setTimeout(() => setHighlightedHeadings([]), 6000);
+  };
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    updateArticleAction(articleId, article).catch((err) =>
+      console.error("Failed to persist article update:", err)
+    );
+  }, [article, articleId]);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <div className="flex w-full">
-        {/* Left: TOC + Article — widened from 1/2 to 3/5 */}
         <div className="w-3/5 flex gap-10 px-8 py-10">
           <div className="sticky top-10 self-start w-56 flex-shrink-0">
             <BackButton />
             <TableOfContents sections={article.sections} />
             <UsedTopics topics={article.sourceTopics} />
           </div>
-          <ArticleBody article={article} articleId={articleId} />
+          <ArticleBody article={article} articleId={articleId} highlightedHeadings={highlightedHeadings} />
         </div>
-
-        {/* Right: Chat — narrowed from 1/2 to 2/5 */}
         <div className="w-2/5 px-8 py-10">
           <ArticleChatPanel
             articleId={articleId}
             article={article}
-            onArticleUpdate={setArticle}
+            onArticleUpdate={handleArticleUpdate}
+            onSectionsChanged={handleSectionsChanged}
           />
         </div>
       </div>

@@ -2,6 +2,8 @@ import { flashLiteRateLimit, generationRateLimit } from "../lib/rateLimit";
 
 const MAX_RETRIES = 4;
 const RETRY_DELAY_MS = 2000;
+const FETCH_TIMEOUT_MS = 30_000;        // give up on a single Gemini call after 30s
+const MAX_RATE_LIMIT_WAIT_MS = 30_000;  // never wait more than 30s cumulative for the limiter
 
 const MODEL_TIERS = {
     "gemini-3.1-flash-lite": "flash-lite",
@@ -17,29 +19,56 @@ function limiterForModel(model) {
     return tier === "flash-lite" ? flashLiteRateLimit : generationRateLimit;
 }
 
-async function waitForRateLimit(model) {
+async function waitForRateLimit(model, totalWaitedMs = 0) {
     const limiter = limiterForModel(model);
     const { success, reset } = await limiter.limit("gemini-global");
 
     if (!success) {
         const waitMs = Math.max(reset - Date.now(), 0);
-        console.log(`[rateLimit] ${model} blocked, waiting ${waitMs}ms`);
+
+        if (totalWaitedMs + waitMs > MAX_RATE_LIMIT_WAIT_MS) {
+            console.log(`[rateLimit] ${model} exceeded wait cap (${totalWaitedMs + waitMs}ms > ${MAX_RATE_LIMIT_WAIT_MS}ms), giving up`);
+            const err = new Error(`Rate limit wait exceeded ${MAX_RATE_LIMIT_WAIT_MS}ms cap for ${model}`);
+            err.code = "RATE_LIMIT_WAIT_EXCEEDED";
+            throw err;
+        }
+
+        console.log(`[rateLimit] ${model} blocked, waiting ${waitMs}ms (total so far: ${totalWaitedMs}ms)`);
         await sleep(waitMs);
-        return waitForRateLimit(model);
+        return waitForRateLimit(model, totalWaitedMs + waitMs);
     }
 }
 
 async function fetchGemini({ prompt, model, apiVersion = "v1" }) {
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
-    
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     const start = Date.now();
-    const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-        }),
-    });
+    let response;
+    try {
+        response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+            }),
+            signal: controller.signal,
+        });
+    } catch (err) {
+        const elapsed = Date.now() - start;
+        if (err.name === "AbortError") {
+            console.log(`[fetchGemini] ${model} TIMED OUT after ${elapsed}ms (limit ${FETCH_TIMEOUT_MS}ms)`);
+            const timeoutErr = new Error(`Gemini API timeout after ${FETCH_TIMEOUT_MS}ms`);
+            timeoutErr.status = 504; // treated as transient by callGemini's retry/fallback logic
+            throw timeoutErr;
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
     const elapsed = Date.now() - start;
 
     if (!response.ok) {

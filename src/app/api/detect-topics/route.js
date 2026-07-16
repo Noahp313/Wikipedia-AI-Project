@@ -16,6 +16,7 @@ async function detectTopics(query) {
   - Multiple topics only if removing either one would gut the question, not just narrow it (e.g. "gravity and electromagnetism" -> both; "industrial revolution in Britain" -> just ["industrial revolution"]).
   - Empty array if query is too vague to extract a real topic.
   - Only extract what's explicitly named — don't infer related entities (e.g. "Elon Musk's companies" ≠ add "Tesla").
+  - Correct obvious spelling errors to the standard spelling of the entity (e.g. "Napolean" -> "Napoleon", "Einstien" -> "Einstein"). Only fix clear typos — don't "correct" alternate valid spellings, transliterations, or names you're not confident about.
   - Preserve natural casing. Order by centrality, most central first.
 
   Descriptions vs. real titles: queries are often descriptions of a topic
