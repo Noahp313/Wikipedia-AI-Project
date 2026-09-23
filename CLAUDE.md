@@ -36,5 +36,5 @@ When I tell you something during a session — a correction, a preference, a dec
 ## My Working Style
 
 - Discuss and pressure-test architecture before implementing
-- Prefer code typed inline in chat over writing straight to files
+- Make necessary code changes directly in the files, as long as you clearly state what was changed (which files, and what changed in each)
 - Pause to evaluate design decisions at key moments rather than rushing to code
