@@ -26,8 +26,8 @@ function historyBlock(history) {
 function buildAnswerPrompt({ query, history, currentArticle, sourceText }) {
   return `
 You are updating a Wikipedia-style article in response to a reader's follow-up question.
-You are given the CURRENT ARTICLE for context. Return a direct answer plus a list of EDITS
-needed to address the question — do not repeat sections that don't need to change.
+You are given the CURRENT ARTICLE for context. Return a direct answer plus a list of EDITS —
+usually none. Most questions should be answered WITHOUT changing the article.
 
 ${historyBlock(history) ? `CONVERSATION SO FAR:\n${historyBlock(history)}\n` : ""}
 Reader's question: "${query}"
@@ -53,7 +53,24 @@ Return ONLY valid JSON (no markdown, no explanation):
 }
 
 Guidelines:
-- "answer" is a short, direct, conversational reply for the chat panel — not the full section text. Keep it to 1-3 short sentences, plain everyday language, no jargon unless the reader's question used it first. Skip hedging, caveats, and restating the question — just answer it simply.
+- "answer" is ONLY a direct answer to a question the reader asked — the article holds the detail, so keep it minimal:
+  - If the message asks a question, answer it in ONE short sentence (two only if truly necessary), under 25 words.
+  - If the message contains no question (e.g. it only asks for an edit), "answer" MUST be "" (empty string).
+  - Never describe or mention your edits in "answer" — the app reports changes to the reader separately.
+  - Plain everyday language, no jargon unless the reader used it first. No greetings, hedging, caveats, or restating the question.
+- WHEN TO EDIT — be strict. The default is an empty "edits" array. Only edit if at least one is true:
+  1. The reader explicitly asks for a change (add, expand, rewrite, remove, fix, etc.).
+  2. The article states something factually wrong, or contradicts the source material.
+  3. The answer to the reader's question is genuinely ABSENT from the article — not stated anywhere,
+     not even in different words or implied — AND it is substantive, encyclopedic content that belongs
+     in the article for any reader (not trivia, and not specific to this reader's situation).
+- Do NOT edit when:
+  - The answer is already in the article anywhere, even worded differently or only in general terms.
+    Answer from it instead.
+  - The change would only rephrase, reword, emphasize, restate more "explicitly", or add an example
+    of something already covered.
+  - The question is a quick clarification, definition, or check of understanding.
+  - You are unsure — when in doubt, don't edit.
 - "amend" means updating an EXISTING section's content — "heading" must exactly match one of the
   existing headings. This includes adding new information, correcting or removing outdated/inaccurate
   information, or both. The "content" you return for an amend REPLACES the section's content entirely,
@@ -63,7 +80,7 @@ Guidelines:
 - If the reader's question reveals something in an existing section is wrong, outdated, or contradicted
   by the source material, use "amend" to fix or remove it rather than leaving it and adding a separate
   correcting section.
-- If nothing about the article needs to change, return an empty "edits" array — it's fine to just answer.
+- If nothing meets the WHEN TO EDIT bar, return an empty "edits" array and just answer.
 `;
 }
 
@@ -96,12 +113,21 @@ function applyEdits(currentArticle, edits) {
   const sections = [...currentArticle.sections];
   const usedHeadings = new Set(sections.map((s) => s.heading));
   const changedHeadings = [];
+  const addedHeadings = [];
+  const amendedHeadings = [];
 
   for (const edit of edits) {
     const idx = sections.findIndex((s) => s.heading === edit.heading);
 
     if (edit.op === "amend" && idx !== -1) {
-      sections[idx] = { heading: edit.heading, content: edit.content, sourceStatus: edit.sourceStatus };
+      if (!amendedHeadings.includes(edit.heading)) amendedHeadings.push(edit.heading);
+      // Keep the user-edited tag: the amend rewrites on top of the user's text, so both contributed.
+      sections[idx] = {
+        heading: edit.heading,
+        content: edit.content,
+        sourceStatus: edit.sourceStatus,
+        ...(sections[idx].userEdited && { userEdited: true }),
+      };
       changedHeadings.push(edit.heading);
       continue;
     }
@@ -115,9 +141,25 @@ function applyEdits(currentArticle, edits) {
     usedHeadings.add(heading);
     sections.push({ heading, content: edit.content, sourceStatus: edit.sourceStatus });
     changedHeadings.push(heading);
+    addedHeadings.push(heading);
   }
 
-  return { article: { ...currentArticle, sections }, changedHeadings };
+  return { article: { ...currentArticle, sections }, changedHeadings, addedHeadings, amendedHeadings };
+}
+
+function quoteList(headings) {
+  const quoted = headings.map((h) => `'${h}'`);
+  if (quoted.length <= 1) return quoted.join("");
+  return `${quoted.slice(0, -1).join(", ")} and ${quoted[quoted.length - 1]}`;
+}
+
+// Built from the edits actually applied (not model prose), so it's always
+// accurate and always one short line.
+function buildChangeNote(addedHeadings, amendedHeadings) {
+  const parts = [];
+  if (addedHeadings.length > 0) parts.push(`Added ${quoteList(addedHeadings)}.`);
+  if (amendedHeadings.length > 0) parts.push(`Updated ${quoteList(amendedHeadings)}.`);
+  return parts.join(" ");
 }
 
 export async function POST(req) {
@@ -165,7 +207,8 @@ export async function POST(req) {
 
     const parsed = extractJson(text);
 
-    if (!parsed || typeof parsed.answer !== "string" || !parsed.answer.trim()) {
+    // "answer" may legitimately be "" (edit-only request), but must be a string
+    if (!parsed || typeof parsed.answer !== "string") {
       console.error("Malformed chatbot-answer response — missing answer:", parsed);
       throw new Error("AI response is missing an answer");
     }
@@ -180,11 +223,17 @@ export async function POST(req) {
       );
     }
 
-    const { article: updatedArticle, changedHeadings } =
-      validEdits.length > 0 ? applyEdits(currentArticle, validEdits) : { article: currentArticle, changedHeadings: [] };
+    const { article: updatedArticle, changedHeadings, addedHeadings, amendedHeadings } =
+      validEdits.length > 0
+        ? applyEdits(currentArticle, validEdits)
+        : { article: currentArticle, changedHeadings: [], addedHeadings: [], amendedHeadings: [] };
+
+    const answer =
+      [parsed.answer.trim(), buildChangeNote(addedHeadings, amendedHeadings)].filter(Boolean).join(" ") ||
+      "Nothing in the article needed to change.";
 
     return Response.json({
-      answer: parsed.answer,
+      answer,
       article: updatedArticle,
       articleChanged: validEdits.length > 0,
       changedHeadings,
