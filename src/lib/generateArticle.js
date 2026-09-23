@@ -80,7 +80,7 @@ export async function generateArticleForTopic(topic) {
     - Every section's "sourceStatus" should be "generated" since no source material was available
     `;
     
-    const data = await callGemini({ prompt, model: GEMINI_MODEL});
+    const data = await callGemini({ prompt, model: GEMINI_MODEL, json: true });
     
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 

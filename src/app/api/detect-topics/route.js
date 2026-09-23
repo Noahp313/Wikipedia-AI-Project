@@ -33,7 +33,7 @@ async function detectTopics(query) {
   If unsure whether something is a real title or just a description, default to collapsing to the entity.
   `;
 
-  const data = await callGemini({ prompt, model: GEMINI_MODEL });
+  const data = await callGemini({ prompt, model: GEMINI_MODEL, json: true, temperature: 0 });
   
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 

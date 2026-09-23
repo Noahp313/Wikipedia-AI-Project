@@ -40,8 +40,13 @@ async function waitForRateLimit(model, totalWaitedMs = 0) {
     }
 }
 
-async function fetchGemini({ prompt, model, apiVersion = "v1" }) {
+async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, temperature }) {
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+    const generationConfig = {
+        ...(json && { responseMimeType: "application/json" }),
+        ...(temperature !== undefined && { temperature }),
+    };
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -54,6 +59,7 @@ async function fetchGemini({ prompt, model, apiVersion = "v1" }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
+                ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
             }),
             signal: controller.signal,
         });
@@ -80,16 +86,16 @@ async function fetchGemini({ prompt, model, apiVersion = "v1" }) {
         throw err;
     }
 
-    const json = await response.json()
-    const usage = json?.usageMetadata;
-    const finishReason = json?.candidates?.[0]?.finishReason;
+    const result = await response.json()
+    const usage = result?.usageMetadata;
+    const finishReason = result?.candidates?.[0]?.finishReason;
     console.log(`[fetchGemini] ${model} succeeded in ${elapsed}ms, finishReason: ${finishReason}`);
     console.log(`[fetchGemini] usageMetadata:`, JSON.stringify(usage, null, 2));
 
-    return json;
+    return result;
 }
 
-export async function callGemini({ prompt, model = "gemini-3.5-flash", apiVersion = "v1" }, attempt = 0) {
+export async function callGemini({ prompt, model = "gemini-3.5-flash", apiVersion = "v1", json = false, temperature }, attempt = 0) {
     const rateLimitStart = Date.now();
     await waitForRateLimit(model);
     const rateLimitElapsed = Date.now() - rateLimitStart;
@@ -98,19 +104,19 @@ export async function callGemini({ prompt, model = "gemini-3.5-flash", apiVersio
     }
 
     try {
-        return await fetchGemini({ prompt, model, apiVersion });
+        return await fetchGemini({ prompt, model, apiVersion, json, temperature });
     } catch (err) {
         const isTransient = err.status === 429 || (err.status >= 500 && err.status < 600);
 
         if (isTransient && attempt < MAX_RETRIES) {
             console.log(`[callGemini] ${model} retrying, attempt ${attempt + 1}`);
             await sleep(RETRY_DELAY_MS * 2 ** (attempt));
-            return callGemini({ prompt, model, apiVersion }, attempt + 1);
+            return callGemini({ prompt, model, apiVersion, json, temperature }, attempt + 1);
         }
 
         if (isTransient && model === "gemini-3.5-flash") {
             console.warn("Falling back to flash-lite after exhausted retries");
-            return callGemini({ prompt, model: "gemini-3.1-flash-lite", apiVersion }, 0);
+            return callGemini({ prompt, model: "gemini-3.1-flash-lite", apiVersion, json, temperature }, 0);
         }
 
         throw err;
