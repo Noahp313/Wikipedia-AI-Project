@@ -1,4 +1,3 @@
-// lib/actions/updateArticle.js
 "use server";
 
 import { updateCachedUserArticle } from "../cache";

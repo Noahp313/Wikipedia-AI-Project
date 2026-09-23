@@ -1,4 +1,3 @@
-// components/article/ArticleView.jsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -75,6 +74,87 @@ function UsedTopics({ topics }) {
   );
 }
 
+function Sources({ sources }) {
+  if (!sources || sources.length === 0) return null;
+
+  return (
+    <div className="mt-8">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+        Sources
+      </h3>
+      <ul className="space-y-2 border-l border-gray-700 pl-3">
+        {sources.map((s) => (
+          <li key={s.topic} className="text-sm">
+            <a
+              href={s.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-300 hover:text-blue-400 transition-colors underline decoration-gray-600 hover:decoration-blue-400 underline-offset-2"
+            >
+              {s.title}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function UndoRedoControls({ canUndo, canRedo, onUndo, onRedo }) {
+  return (
+    <div className="flex items-center gap-2 mb-4">
+      <button
+        onClick={onUndo}
+        disabled={!canUndo}
+        title="Undo last change"
+        aria-label="Undo last change"
+        className="flex-1 px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-800 disabled:hover:text-gray-300"
+      >
+        ↶ Undo
+      </button>
+      <button
+        onClick={onRedo}
+        disabled={!canRedo}
+        title="Redo last undone change"
+        aria-label="Redo last undone change"
+        className="flex-1 px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-800 disabled:hover:text-gray-300"
+      >
+        Redo ↷
+      </button>
+    </div>
+  );
+}
+
+function EditHistory({ history, historyIndex, onJump }) {
+  if (!history || history.length <= 1) return null;
+
+  return (
+    <div className="mt-8">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+        Edit History
+      </h3>
+      <ul className="space-y-2 border-l border-gray-700 pl-3">
+        {history.map((entry, i) => {
+          const isCurrent = i === historyIndex;
+          return (
+            <li key={entry.timestamp}>
+              <button
+                onClick={() => onJump(i)}
+                title={entry.label}
+                className={`block w-full text-left text-sm truncate transition-colors ${
+                  isCurrent ? "text-blue-400 font-semibold" : "text-gray-400 hover:text-gray-200"
+                }`}
+              >
+                {i === 0 ? "Original article" : entry.label}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function ArticleBody({ article, articleId, highlightedHeadings = [] }) {
   return (
     <article className="max-w-3xl">
@@ -130,7 +210,7 @@ function ChatMessage({ role, content }) {
   );
 }
 
-function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChanged }) {
+function ArticleChatPanel({ articleId, article, onArticleUpdate, onMinimize }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -180,6 +260,7 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
 
     // sourceTopics as of this turn; may get extended below if new topics are processed
     let usedTopics = article.sourceTopics;
+    let topicsExtended = false;
 
     try {
       const newTopicRes = await fetch("/api/identify-new-topics", {
@@ -233,11 +314,7 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
           if (succeeded.length > 0) {
             const newTopicNames = succeeded.map((p) => p.topic);
             usedTopics = [...usedTopics, ...newTopicNames];
-
-            onArticleUpdate((prevArticle) => ({
-              ...prevArticle,
-              sourceTopics: [...prevArticle.sourceTopics, ...newTopicNames],
-            }));
+            topicsExtended = true;
           }
         } catch (err) {
           console.error("Failed to process new topics:", err);
@@ -269,12 +346,20 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
           ...prev,
           { role: "assistant", content: "Something went wrong while figuring out what's relevant. Please try again." },
         ]);
+        // Still record the newly-pulled-in topic even though the rest of the turn failed.
+        if (topicsExtended) {
+          onArticleUpdate(
+            { ...article, sourceTopics: usedTopics },
+            { changedHeadings: [], label: trimmed }
+          );
+        }
         return;
       }
 
-      // Answer the question and apply any article edits — but only persist
-      // a new article reference when something actually changed, so pure
-      // Q&A turns don't trigger a redundant Redis write via the effect below.
+      // Answer the question and apply any article edits — but only push a new
+      // history entry when something actually changed (a content edit, or a
+      // new topic pulled in), so pure Q&A turns don't create empty history
+      // steps or trigger a redundant Redis write.
       try {
         const { answer, article: updatedArticle, articleChanged, changedHeadings } = await getAnswer({
           query: trimmed,
@@ -287,11 +372,15 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
         setMessages((prev) => [...prev, { role: "assistant", content: answer }]);
 
         if (articleChanged) {
-          onArticleUpdate((prevArticle) => ({
-            ...updatedArticle,
-            sourceTopics: prevArticle.sourceTopics,
-          }));
-          onSectionsChanged?.(changedHeadings || []);
+          onArticleUpdate(
+            { ...updatedArticle, sourceTopics: usedTopics },
+            { changedHeadings: changedHeadings || [], label: trimmed }
+          );
+        } else if (topicsExtended) {
+          onArticleUpdate(
+            { ...article, sourceTopics: usedTopics },
+            { changedHeadings: [], label: trimmed }
+          );
         }
       } catch (err) {
         console.error("Answer generation failed:", err);
@@ -300,6 +389,13 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
           ...prev,
           { role: "assistant", content: "Something went wrong while answering that. Please try again." },
         ]);
+        // Still record the newly-pulled-in topic even though the answer step failed.
+        if (topicsExtended) {
+          onArticleUpdate(
+            { ...article, sourceTopics: usedTopics },
+            { changedHeadings: [], label: trimmed }
+          );
+        }
       }
     } catch (err) {
       console.error("Chat error:", err);
@@ -315,8 +411,16 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
 
   return (
     <aside className="sticky top-10 self-start h-[calc(100vh-5rem)] w-full rounded-lg border border-gray-700 bg-gray-800 flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-700">
+      <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-200">Ask about this article</h3>
+        <button
+          onClick={onMinimize}
+          aria-label="Minimize chat"
+          title="Minimize"
+          className="text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700 leading-none"
+        >
+          −
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
@@ -362,21 +466,73 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onSectionsChang
 }
 
 export default function ArticleView({ article: initialArticle, articleId }) {
-  const [article, setArticle] = useState(initialArticle);
+  // history is the full undo/redo stack; historyIndex points at the entry
+  // currently on screen. Each entry captures the full article snapshot at
+  // that point, plus the headings that changed to produce it (used to know
+  // what to highlight when stepping across that entry, in either direction).
+  const [historyState, setHistoryState] = useState(() => ({
+    entries: [{ article: initialArticle, changedHeadings: [], label: "Original article", timestamp: Date.now() }],
+    index: 0,
+  }));
   const [highlightedHeadings, setHighlightedHeadings] = useState([]);
+  const [isChatMinimized, setIsChatMinimized] = useState(false);
+  const [sources, setSources] = useState([]);
   const isFirstRender = useRef(true);
+
+  const { entries: history, index: historyIndex } = historyState;
+  const article = history[historyIndex].article;
 
   if (!article || !Array.isArray(article.sections)) return null;
 
-  const handleArticleUpdate = (updater) => {
-    setArticle((prev) => (typeof updater === "function" ? updater(prev) : updater));
+  const flashHighlight = (headings) => {
+    setHighlightedHeadings(headings || []);
+    if (headings && headings.length > 0) {
+      // clear after a few seconds so the highlight doesn't linger forever
+      setTimeout(() => setHighlightedHeadings([]), 6000);
+    }
   };
 
-  const handleSectionsChanged = (headings) => {
-    setHighlightedHeadings(headings);
-    // clear after a few seconds so the highlight doesn't linger forever
-    setTimeout(() => setHighlightedHeadings([]), 6000);
+  // Pushes a new history entry from the current position — using a functional
+  // update so this stays correct even if called more than once in a row before
+  // a re-render lands (e.g. two chat turns' effects resolving back to back).
+  const handleArticleUpdate = (nextArticleOrUpdater, meta = {}) => {
+    setHistoryState((prev) => {
+      const prevArticle = prev.entries[prev.index].article;
+      const nextArticle =
+        typeof nextArticleOrUpdater === "function" ? nextArticleOrUpdater(prevArticle) : nextArticleOrUpdater;
+
+      const truncated = prev.entries.slice(0, prev.index + 1);
+      const entries = [
+        ...truncated,
+        {
+          article: nextArticle,
+          changedHeadings: meta.changedHeadings || [],
+          label: meta.label || "Edited",
+          timestamp: Date.now(),
+        },
+      ];
+
+      return { entries, index: entries.length - 1 };
+    });
+    flashHighlight(meta.changedHeadings);
   };
+
+  // Moves to an arbitrary point in history (undo/redo step by ±1, or a direct
+  // jump from the Edit History list) and highlights whatever sections differ
+  // between the old and new position — i.e. only the most recent step(s)
+  // actually crossed, not everything ever changed across the whole history.
+  const jumpToHistory = (targetIndex) => {
+    if (targetIndex < 0 || targetIndex >= history.length || targetIndex === historyIndex) return;
+
+    const [lo, hi] = targetIndex > historyIndex ? [historyIndex + 1, targetIndex] : [targetIndex + 1, historyIndex];
+    const crossedHeadings = [...new Set(history.slice(lo, hi + 1).flatMap((h) => h.changedHeadings))];
+
+    setHistoryState((prev) => ({ ...prev, index: targetIndex }));
+    flashHighlight(crossedHeadings);
+  };
+
+  const handleUndo = () => jumpToHistory(historyIndex - 1);
+  const handleRedo = () => jumpToHistory(historyIndex + 1);
 
   useEffect(() => {
     if (isFirstRender.current) {
@@ -388,26 +544,71 @@ export default function ArticleView({ article: initialArticle, articleId }) {
     );
   }, [article, articleId]);
 
+  useEffect(() => {
+    if (!article.sourceTopics || article.sourceTopics.length === 0) {
+      setSources([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    fetch("/api/article-sources", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topics: article.sourceTopics }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setSources(data.sources ?? []);
+      })
+      .catch((err) => console.error("Failed to load sources:", err));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [article.sourceTopics]);
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <div className="flex w-full">
-        <div className="w-3/5 flex gap-10 px-8 py-10">
+        <div
+          className={`${
+            isChatMinimized ? "w-full" : "w-3/5"
+          } flex gap-10 px-8 py-10 transition-[width] duration-300`}
+        >
           <div className="sticky top-10 self-start w-56 flex-shrink-0">
             <BackButton />
+            <UndoRedoControls
+              canUndo={historyIndex > 0}
+              canRedo={historyIndex < history.length - 1}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+            />
             <TableOfContents sections={article.sections} />
             <UsedTopics topics={article.sourceTopics} />
+            <Sources sources={sources} />
+            <EditHistory history={history} historyIndex={historyIndex} onJump={jumpToHistory} />
           </div>
           <ArticleBody article={article} articleId={articleId} highlightedHeadings={highlightedHeadings} />
         </div>
-        <div className="w-2/5 px-8 py-10">
+        <div className={isChatMinimized ? "hidden" : "w-2/5 px-8 py-10"}>
           <ArticleChatPanel
             articleId={articleId}
             article={article}
             onArticleUpdate={handleArticleUpdate}
-            onSectionsChanged={handleSectionsChanged}
+            onMinimize={() => setIsChatMinimized(true)}
           />
         </div>
       </div>
+
+      {isChatMinimized && (
+        <button
+          onClick={() => setIsChatMinimized(false)}
+          className="fixed bottom-6 right-6 flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 text-sm font-medium shadow-lg transition-colors"
+        >
+          Ask about this article
+        </button>
+      )}
     </div>
   );
 }

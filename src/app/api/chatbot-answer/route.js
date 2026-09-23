@@ -53,7 +53,7 @@ Return ONLY valid JSON (no markdown, no explanation):
 }
 
 Guidelines:
-- "answer" is a short, direct, conversational reply for the chat panel — not the full section text.
+- "answer" is a short, direct, conversational reply for the chat panel — not the full section text. Keep it to 1-3 short sentences, plain everyday language, no jargon unless the reader's question used it first. Skip hedging, caveats, and restating the question — just answer it simply.
 - "amend" means updating an EXISTING section's content — "heading" must exactly match one of the
   existing headings. This includes adding new information, correcting or removing outdated/inaccurate
   information, or both. The "content" you return for an amend REPLACES the section's content entirely,

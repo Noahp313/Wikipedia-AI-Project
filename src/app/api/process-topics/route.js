@@ -10,7 +10,7 @@ async function processTopic(topic) {
     return { topic, status: "cache-hit" };
   }
 
-  // Retry/backoff/model-fallback all live in callGemini (geminiClient.js) now —
+  // Retry/backoff/model-fallback live in callGemini (geminiClient.js) —
   // whatever it throws here is final for this topic.
   const article = await generateArticleForTopic(topic);
   await setCachedArticle(topic, article);

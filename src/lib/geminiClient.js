@@ -5,6 +5,7 @@ const RETRY_DELAY_MS = 2000;
 const FETCH_TIMEOUT_MS = 30_000;        // give up on a single Gemini call after 30s
 const MAX_RATE_LIMIT_WAIT_MS = 30_000;  // never wait more than 30s cumulative for the limiter
 
+// Maps each model to the rate limiter that governs it (see rateLimit.js).
 const MODEL_TIERS = {
     "gemini-3.1-flash-lite": "flash-lite",
     "gemini-3.5-flash": "generation",

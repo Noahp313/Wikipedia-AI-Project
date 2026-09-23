@@ -1,3 +1,4 @@
+// Wikipedia boilerplate sections with no encyclopedic content of their own — excluded from source text.
 const SKIP_SECTIONS = new Set([
     "references",
     "external links",

@@ -154,15 +154,12 @@ export default function Home() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center p-10 bg-gray-900 text-white">
-      {/* Page Title */}
       <h1 className="text-5xl font-bold tracking-tight">Wikipedia AI</h1>
 
-      {/* Page Description */}
       <p className="mt-4 text-gray-300 text-center max-w-md">
         Ask anything. Get structured, Wikipedia-style explanations instantly.
       </p>
 
-      {/* Search Input Section */}
       <div className="mt-8 w-full max-w-xl">
         <input
           className="w-full p-4 border border-gray-700 bg-gray-800 text-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -177,7 +174,6 @@ export default function Home() {
         <p className="mt-4 text-red-400 text-sm max-w-xl text-center">{errorMessage}</p>
       )}
 
-      {/* Pipeline progress */}
       {pipelineStep && pipelineStep !== "done" && (
         <div className="mt-6 w-full max-w-xl">
           <PipelineSteps
@@ -190,7 +186,6 @@ export default function Home() {
 
       <RecentArticles />
 
-      {/* Found Topics List */}
       {foundTopics.length > 0 && (
         <div className="mt-8 w-full max-w-xl">
           <p className="text-gray-400 text-sm mb-2">Found topics:</p>

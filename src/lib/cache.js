@@ -30,7 +30,7 @@ export async function setCachedUserArticle(userId, query, article) {
     const articleId = randomUUID();
     try {
         await redis.set(`user-article:${articleId}`, { ...article, query, userId }, { ex: CACHE_TTL_SECONDS });
-        // No longer auto-saving to user-articles list — saving is now explicit via saveUserArticle()
+        // Generating an article doesn't save it to the user's list — saveUserArticle() does that separately
         return articleId;
     } catch (err) {
         console.error(`Error setting cached user article for ${userId}:`, err);

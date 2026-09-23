@@ -1,4 +1,4 @@
-// components/PipelineSteps.jsx
+// Order here drives both the progress list and the currentIndex lookup below.
 const STEPS = [
   { key: "detect-topics", label: "Detecting topics" },
   { key: "process-topics", label: "Processing topics" },

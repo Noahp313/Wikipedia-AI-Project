@@ -42,7 +42,7 @@ async function resolveTitle(topic) {
     const data = await res.json();
     const titles = data[1]
     
-    return titles && titles.length > 0 ? titles[0] : null; // Return the first search result
+    return titles && titles.length > 0 ? titles[0] : null;
 }
 
 async function fetchExtract(title) {
