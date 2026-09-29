@@ -1,7 +1,7 @@
 import { getCachedArticle, setCachedUserArticle } from "../../../lib/cache";
 import { callGemini } from "../../../lib/geminiClient";
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_MODEL = "gemini-3.5-flash";
 
 function buildSourceText(relevantTopics, cachedArticles) {
   return relevantTopics
@@ -74,7 +74,7 @@ async function createUserArticle(query, sourceText, devStatus) {
     ? buildGroundedPrompt(query, sourceText)
     : buildUngroundedPrompt(query);
 
-  const data = await callGemini({ prompt, model: GEMINI_MODEL });
+  const data = await callGemini({ source: "create-user-article", prompt, model: GEMINI_MODEL });
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {

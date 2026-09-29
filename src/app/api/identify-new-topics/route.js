@@ -46,7 +46,7 @@ function buildNewTopicPrompt(message, sourceText) {
 async function checkNewTopic(message, sourceText) {
   const prompt = buildNewTopicPrompt(message, sourceText);
 
-  const data = await callGemini({ prompt, model: GEMINI_MODEL });
+  const data = await callGemini({ source: "identify-new-topics", prompt, model: GEMINI_MODEL });
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {

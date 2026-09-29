@@ -102,13 +102,13 @@ function parseRelevantSections(text) {
 export async function detectRelevantSections(
   query,
   articles,
-  { model = DEFAULT_MODEL, history, currentTopic } = {}
+  { model = DEFAULT_MODEL, history, currentTopic, source = "detect-relevance" } = {}
 ) {
   const sourceText = buildSourceText(articles);
   const prompt = buildPrompt(query, sourceText, { history, currentTopic });
   console.log(prompt)
 
-  const data = await callGemini({ prompt, model });
+  const data = await callGemini({ source, prompt, model });
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
   if (!text) {

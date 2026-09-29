@@ -1,5 +1,6 @@
 import { getCachedArticle } from "../../../lib/cache";
 import { detectRelevantSections } from "../../../lib/detectRelevance";
+import { recordPipelineEvent } from "../../../lib/devTelemetry";
 
 export async function POST(req) {
   let body;
@@ -32,6 +33,7 @@ export async function POST(req) {
     // No source material made it into the cache (e.g. every topic failed to
     // generate) — fall back to ungrounded generation instead of failing the
     // whole pipeline, same as the "cached but nothing relevant" case below.
+    recordPipelineEvent("search-relevance:no-cached-articles");
     return Response.json({ relevantSections: [], developmentSourceStatus: "no-relevant-sections" });
   }
 
@@ -48,6 +50,7 @@ export async function POST(req) {
       });
     }
 
+    recordPipelineEvent(`search-relevance:${developmentSourceStatus}`);
     return Response.json({ relevantSections, developmentSourceStatus });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });

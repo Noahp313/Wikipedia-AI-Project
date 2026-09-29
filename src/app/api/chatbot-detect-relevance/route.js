@@ -1,5 +1,6 @@
 import { getCachedArticle } from "../../../lib/cache";
 import { detectRelevantSections } from "../../../lib/detectRelevance";
+import { recordPipelineEvent } from "../../../lib/devTelemetry";
 
 function isValidHistory(history) {
   return (
@@ -55,6 +56,7 @@ export async function POST(req) {
     // Nothing to search against — either an ungrounded article with no
     // sourceTopics, or every cached topic has expired. Not an error case;
     // just means there's no source-grounded answer available.
+    recordPipelineEvent("chat-relevance:no-cached-articles");
     return Response.json({ relevantSections: [], chatContextStatus: "no-relevant-sections" });
   }
 
@@ -63,6 +65,7 @@ export async function POST(req) {
       ...(model ? { model } : {}),
       history,
       currentTopic,
+      source: "chatbot-detect-relevance",
     });
 
     const chatContextStatus =
@@ -76,6 +79,7 @@ export async function POST(req) {
     }
 
     console.log(relevantSections)
+    recordPipelineEvent(`chat-relevance:${chatContextStatus}`);
     return Response.json({ relevantSections, chatContextStatus });
   } catch (err) {
     return Response.json({ error: err.message }, { status: 500 });

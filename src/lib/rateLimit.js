@@ -16,3 +16,10 @@ export const generationRateLimit = new Ratelimit({
     analytics: false,
     prefix: "ratelimit:generation",
 });
+// Brute-force guard for the developer dashboard login (global, not per-IP).
+export const devLoginRateLimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(5, "1 m"),
+    analytics: false,
+    prefix: "ratelimit:dev-login",
+});

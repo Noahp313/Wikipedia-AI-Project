@@ -1,4 +1,5 @@
 import { flashLiteRateLimit, generationRateLimit } from "../lib/rateLimit";
+import { recordGeminiCall } from "../lib/devTelemetry";
 
 const MAX_RETRIES = 4;
 const RETRY_DELAY_MS = 2000;
@@ -69,6 +70,7 @@ async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, tem
             console.log(`[fetchGemini] ${model} TIMED OUT after ${elapsed}ms (limit ${FETCH_TIMEOUT_MS}ms)`);
             const timeoutErr = new Error(`Gemini API timeout after ${FETCH_TIMEOUT_MS}ms`);
             timeoutErr.status = 504; // treated as transient by callGemini's retry/fallback logic
+            timeoutErr.code = "TIMEOUT";
             throw timeoutErr;
         }
         throw err;
@@ -95,10 +97,57 @@ async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, tem
     return result;
 }
 
-export async function callGemini({ prompt, model = "gemini-3.5-flash", apiVersion = "v1", json = false, temperature }, attempt = 0) {
+const DEFAULT_MODEL = "gemini-3.5-flash";
+const FALLBACK_MODEL = "gemini-3.1-flash-lite";
+
+// `source` names the calling stage (e.g. "create-user-article") for the dev dashboard.
+export async function callGemini({ source = "unknown", ...options }) {
+    const requestedModel = options.model ?? DEFAULT_MODEL;
+    // Filled in by callGeminiWithRetry across all attempts and any fallback.
+    const stats = { model: requestedModel, retries: 0, timeouts: 0, rateLimitWaitMs: 0, fellBack: false };
+    const start = Date.now();
+    let result;
+    let error;
+
+    try {
+        result = await callGeminiWithRetry({ ...options, model: requestedModel }, 0, stats);
+        return result;
+    } catch (err) {
+        error = err;
+        throw err;
+    } finally {
+        const usage = result?.usageMetadata;
+        recordGeminiCall({
+            timestamp: start,
+            source,
+            requestedModel,
+            model: stats.model,
+            durationMs: Date.now() - start,
+            rateLimitWaitMs: stats.rateLimitWaitMs,
+            retries: stats.retries,
+            timeouts: stats.timeouts,
+            fellBack: stats.fellBack,
+            inputTokens: usage?.promptTokenCount ?? 0,
+            // Thinking tokens are billed as output
+            outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+            outcome: !error
+                ? "ok"
+                : error.code === "RATE_LIMIT_WAIT_EXCEEDED"
+                ? "rate-limited"
+                : error.code === "TIMEOUT"
+                ? "timeout"
+                : "error",
+            status: error?.status ?? null,
+        });
+    }
+}
+
+async function callGeminiWithRetry({ prompt, model, apiVersion = "v1", json = false, temperature }, attempt, stats) {
+    stats.model = model;
     const rateLimitStart = Date.now();
     await waitForRateLimit(model);
     const rateLimitElapsed = Date.now() - rateLimitStart;
+    stats.rateLimitWaitMs += rateLimitElapsed;
     if (rateLimitElapsed > 50) {
         console.log(`[rateLimit] ${model} waited ${rateLimitElapsed}ms total`);
     }
@@ -107,16 +156,19 @@ export async function callGemini({ prompt, model = "gemini-3.5-flash", apiVersio
         return await fetchGemini({ prompt, model, apiVersion, json, temperature });
     } catch (err) {
         const isTransient = err.status === 429 || (err.status >= 500 && err.status < 600);
+        if (err.code === "TIMEOUT") stats.timeouts++;
 
         if (isTransient && attempt < MAX_RETRIES) {
             console.log(`[callGemini] ${model} retrying, attempt ${attempt + 1}`);
+            stats.retries++;
             await sleep(RETRY_DELAY_MS * 2 ** (attempt));
-            return callGemini({ prompt, model, apiVersion, json, temperature }, attempt + 1);
+            return callGeminiWithRetry({ prompt, model, apiVersion, json, temperature }, attempt + 1, stats);
         }
 
-        if (isTransient && model === "gemini-3.5-flash") {
+        if (isTransient && model === DEFAULT_MODEL) {
             console.warn("Falling back to flash-lite after exhausted retries");
-            return callGemini({ prompt, model: "gemini-3.1-flash-lite", apiVersion, json, temperature }, 0);
+            stats.fellBack = true;
+            return callGeminiWithRetry({ prompt, model: FALLBACK_MODEL, apiVersion, json, temperature }, 0, stats);
         }
 
         throw err;

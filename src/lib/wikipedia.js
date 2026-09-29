@@ -134,7 +134,7 @@ async function pickTitleFromSearch(topic) {
         - If you are not confident any article covers the topic, return null.
         `;
 
-        const data = await callGemini({ prompt, model: PICKER_MODEL, json: true, temperature: 0 });
+        const data = await callGemini({ source: "wikipedia-title-picker", prompt, model: PICKER_MODEL, json: true, temperature: 0 });
         const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
         const title = text ? JSON.parse(text).title : null;
 

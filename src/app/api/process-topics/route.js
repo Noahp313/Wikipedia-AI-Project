@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
 import { generateArticleForTopic } from "../../../lib/generateArticle";
 import { getCachedArticle, setCachedArticle } from "../../../lib/cache";
+import { recordPipelineEvent } from "../../../lib/devTelemetry";
 
 const MAX_CONCURRENT = 2; // tune based on your Gemini tier's rate limit
 
 async function processTopic(topic) {
   const cached = await getCachedArticle(topic);
   if (cached) {
+    recordPipelineEvent("topic:cache-hit");
     return { topic, status: "cache-hit" };
   }
 
@@ -14,6 +16,7 @@ async function processTopic(topic) {
   // whatever it throws here is final for this topic.
   const article = await generateArticleForTopic(topic);
   await setCachedArticle(topic, article);
+  recordPipelineEvent("topic:generated", `topic-source:${article.sourceStatus}`);
 
   return {
     topic,
@@ -69,7 +72,9 @@ export async function POST(req) {
       : { topic: uniqueTopics[i], status: "error", error: r.reason?.message ?? "Unknown error" }
   );
 
-  const hasFailures = summary.some((s) => s.status === "error");
+  const failureCount = summary.filter((s) => s.status === "error").length;
+  if (failureCount > 0) recordPipelineEvent(...Array(failureCount).fill("topic:error"));
+  const hasFailures = failureCount > 0;
 
   return NextResponse.json(
     { processed: summary },

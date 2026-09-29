@@ -1,7 +1,7 @@
 import { getCachedArticle } from "../../../lib/cache";
 import { callGemini } from "../../../lib/geminiClient";
 
-const GEMINI_MODEL = "gemini-3.1-flash-lite";
+const GEMINI_MODEL = "gemini-3.5-flash";
 const VALID_SOURCE_STATUSES = ["source", "hybrid", "generated"];
 
 function buildSourceText(relevantSections, cachedArticles) {
@@ -201,7 +201,7 @@ export async function POST(req) {
   const prompt = buildAnswerPrompt({ query: query.trim(), history, currentArticle, sourceText });
 
   try {
-    const data = await callGemini({ prompt, model: GEMINI_MODEL });
+    const data = await callGemini({ source: "chatbot-answer", prompt, model: GEMINI_MODEL });
     const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("No text returned from Gemini API");
 
