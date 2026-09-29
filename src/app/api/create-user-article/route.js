@@ -1,5 +1,7 @@
 import { getCachedArticle, setCachedUserArticle } from "../../../lib/cache";
 import { callGemini } from "../../../lib/geminiClient";
+import { getSessionUser } from "../../../lib/session";
+import { userArticleRateLimit } from "../../../lib/rateLimit";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
 
@@ -120,10 +122,16 @@ export async function POST(req) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { query, topics, userId, devStatus } = body;
+  const { query, topics, devStatus } = body;
 
-  if (!userId || typeof userId !== "string") {
-    return Response.json({ error: "Missing userId" }, { status: 400 });
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "No session" }, { status: 401 });
+  }
+
+  const { success: withinLimit } = await userArticleRateLimit.limit(user.id);
+  if (!withinLimit) {
+    return Response.json({ error: "You've generated a lot of articles recently. Try again in a bit." }, { status: 429 });
   }
 
   if (!query || typeof query !== "string" || !query.trim()) {
@@ -163,7 +171,7 @@ export async function POST(req) {
 
     article.sourceTopics = uniqueTopicNames;
 
-    const articleId = await setCachedUserArticle(userId, cleanedQuery, article);
+    const articleId = await setCachedUserArticle(user.id, cleanedQuery, article);
 
     return Response.json({ article, articleId, status: "generated", devStatus });
   } catch (err) {

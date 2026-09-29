@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { getUserArticleIds, getCachedUserArticle } from "../../../lib/cache";
+import { getSessionUser } from "../../../lib/session";
 
-export async function GET(request) {
-  const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("userId");
+export async function GET() {
+  const user = await getSessionUser();
 
-  if (!userId) {
-    return NextResponse.json({ error: "Missing userId" }, { status: 400 });
+  // Only signed-in users can save, so anyone else has an empty list
+  if (!user || user.isAnonymous) {
+    return NextResponse.json({ articles: [] });
   }
 
   try {
-    const articleIds = await getUserArticleIds(userId);
+    const articleIds = await getUserArticleIds(user.id);
     const recentIds = articleIds.slice(0, 10);
 
     if (!recentIds.length) {

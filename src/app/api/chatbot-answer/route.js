@@ -1,5 +1,7 @@
 import { getCachedArticle } from "../../../lib/cache";
 import { callGemini } from "../../../lib/geminiClient";
+import { getSessionUser } from "../../../lib/session";
+import { userChatRateLimit } from "../../../lib/rateLimit";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
 const VALID_SOURCE_STATUSES = ["source", "hybrid", "generated"];
@@ -177,6 +179,16 @@ export async function POST(req) {
   }
   if (!currentArticle || typeof currentArticle.title !== "string" || !Array.isArray(currentArticle.sections)) {
     return Response.json({ error: "Missing or invalid currentArticle" }, { status: 400 });
+  }
+
+  const user = await getSessionUser();
+  if (!user) {
+    return Response.json({ error: "No session" }, { status: 401 });
+  }
+
+  const { success: withinLimit } = await userChatRateLimit.limit(user.id);
+  if (!withinLimit) {
+    return Response.json({ error: "You've sent a lot of messages recently. Try again in a bit." }, { status: 429 });
   }
 
   const isGrounded =

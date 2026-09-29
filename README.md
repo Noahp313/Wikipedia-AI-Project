@@ -91,9 +91,19 @@ src/
    | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) |
    | `UPSTASH_REDIS_REST_URL` | Upstash console → your database → REST API |
    | `UPSTASH_REDIS_REST_TOKEN` | same page as above |
+   | `DATABASE_URL` | [Neon](https://console.neon.tech) (free) → your project → pooled connection string. Holds users and accounts. |
+   | `BETTER_AUTH_SECRET` | Generate with `openssl rand -base64 32` |
+   | `BETTER_AUTH_URL` | `http://localhost:3000` locally; your deploy URL in production |
+   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud console → APIs & Services → Credentials → OAuth client ID (Web application). Redirect URI: `<BETTER_AUTH_URL>/api/auth/callback/google` |
    | `DEV_DASHBOARD_TOKEN` | *Optional.* Enables the developer dashboard at `/dev` (sign in at `/dev/login`). Generate with `openssl rand -hex 32`; must be ≥ 32 chars. Unset → every `/dev` route returns 404. |
 
    > **Heads up:** Upstash's free tier auto-deletes a database after a period of inactivity. If you come back to this project after a while and every search fails with `{"error":"fetch failed"}`, that's almost always a dead Redis hostname, not a code bug — run `nslookup <your-upstash-host>` to check for `NXDOMAIN` before debugging anything else. Spin up a fresh database and update `.env.local` if so.
+
+   Then create the auth tables in Postgres (once, and again after upgrading Better Auth or adding auth plugins):
+
+   ```bash
+   npx auth@latest migrate
+   ```
 
 3. **Run the dev server**
 

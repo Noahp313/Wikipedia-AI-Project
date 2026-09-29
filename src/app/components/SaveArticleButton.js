@@ -1,30 +1,51 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getUserId } from "../../lib/getUserId";
+import { useRouter, useSearchParams } from "next/navigation";
+import { authClient, signInWithGoogle } from "../../lib/auth-client";
 import { BookmarkIcon, CheckIcon, XIcon } from "./icons";
 
 export default function SaveArticleButton({ articleId }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { data: session, isPending } = authClient.useSession();
   const [saved, setSaved] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [checked, setChecked] = useState(false);
   const [working, setWorking] = useState(false);
 
+  const isSignedIn = !!session?.user && !session.user.isAnonymous;
+  // Set when the user clicked Save while anonymous and came back from Google sign-in
+  const pendingSave = searchParams.get("save") === "1";
+
   useEffect(() => {
-    const userId = getUserId();
-    if (!userId || !articleId) {
-      setLoading(false);
+    if (!isSignedIn || !articleId) return;
+
+    const request = pendingSave
+      ? fetch("/api/save-article", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ articleId }),
+        }).then((res) => ({ saved: res.ok }))
+      : fetch(`/api/save-article?articleId=${articleId}`).then((res) => res.json());
+
+    request
+      .then((data) => setSaved(!!data.saved))
+      .catch((err) => console.error("Failed to check saved status:", err))
+      .finally(() => {
+        setChecked(true);
+        if (pendingSave) router.replace(`/article/${articleId}`, { scroll: false });
+      });
+  }, [articleId, isSignedIn, pendingSave, router]);
+
+  const handleToggle = async () => {
+    // Saving needs an account: sign in, then come back and finish the save.
+    // The article moves to the new account during sign-in.
+    if (!isSignedIn) {
+      setWorking(true);
+      await signInWithGoogle(`/article/${articleId}?save=1`);
       return;
     }
 
-    fetch(`/api/save-article?userId=${userId}&articleId=${articleId}`)
-      .then((res) => res.json())
-      .then((data) => setSaved(!!data.saved))
-      .catch((err) => console.error("Failed to check saved status:", err))
-      .finally(() => setLoading(false));
-  }, [articleId]);
-
-  const handleToggle = async () => {
-    const userId = getUserId();
     setWorking(true);
 
     // Optimistic update
@@ -33,12 +54,12 @@ export default function SaveArticleButton({ articleId }) {
 
     try {
       const res = await fetch(
-        `/api/save-article${nextSaved ? "" : `?userId=${userId}&articleId=${articleId}`}`,
+        `/api/save-article${nextSaved ? "" : `?articleId=${articleId}`}`,
         nextSaved
           ? {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ userId, articleId }),
+              body: JSON.stringify({ articleId }),
             }
           : { method: "DELETE" }
       );
@@ -52,6 +73,8 @@ export default function SaveArticleButton({ articleId }) {
     }
   };
 
+  const loading = isPending || (isSignedIn && !checked);
+
   if (loading) {
     return (
       <div className="w-[104px] h-[34px] rounded-lg bg-subtle animate-pulse flex-shrink-0" />
@@ -62,7 +85,9 @@ export default function SaveArticleButton({ articleId }) {
     <button
       onClick={handleToggle}
       disabled={working}
-      title={saved ? "Remove from saved articles" : "Save this article"}
+      title={
+        !isSignedIn ? "Sign in with Google to save this article" : saved ? "Remove from saved articles" : "Save this article"
+      }
       className={`group btn flex-shrink-0 ${
         saved ? "btn-secondary hover:bg-danger-soft hover:text-danger hover:border-danger/30" : "btn-primary"
       }`}
@@ -77,7 +102,7 @@ export default function SaveArticleButton({ articleId }) {
       ) : (
         <>
           <BookmarkIcon size={15} />
-          Save
+          {isSignedIn ? "Save" : "Sign in to save"}
         </>
       )}
     </button>

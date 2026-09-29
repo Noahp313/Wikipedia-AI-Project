@@ -23,3 +23,19 @@ export const devLoginRateLimit = new Ratelimit({
     analytics: false,
     prefix: "ratelimit:dev-login",
 });
+
+// Per-user ceilings on the expensive endpoints, on top of the global Gemini
+// limits above. Keyed by session user id (anonymous users included).
+export const userArticleRateLimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(30, "1 h"),
+    analytics: false,
+    prefix: "ratelimit:user-article",
+});
+
+export const userChatRateLimit = new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(100, "1 h"),
+    analytics: false,
+    prefix: "ratelimit:user-chat",
+});

@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getUserId } from "../lib/getUserId";
+import { ensureSession } from "../lib/auth-client";
 import RecentArticles from "../app/components/RecentArticles";
 import PipelineSteps from "../app/components/PipelineSteps";
+import AccountButton from "../app/components/AccountButton";
 import { LogoMark, SearchIcon, SpinnerIcon } from "../app/components/icons";
 
 export default function Home() {
@@ -125,6 +126,9 @@ export default function Home() {
     // --- Stage 4: create-user-article ---
     setPipelineStep("create-user-article");
     try {
+      // The article is owned by the session user — anonymous if not signed in
+      await ensureSession();
+
       const createRes = await fetch("/api/create-user-article", {
         method: "POST",
         headers: {
@@ -133,7 +137,6 @@ export default function Home() {
         body: JSON.stringify({
           topics: relevantSections,
           query: cleaned,
-          userId: getUserId(),
           devStatus: currentDevStatus,
         }),
       });
@@ -160,6 +163,9 @@ export default function Home() {
       <header className="flex items-center gap-2.5 px-4 py-4 sm:px-6 sm:py-5">
         <LogoMark size={26} />
         <span className="text-sm font-semibold tracking-tight text-ink">Wikipedia AI</span>
+        <div className="ml-auto">
+          <AccountButton />
+        </div>
       </header>
 
       <div className="flex-1 flex flex-col items-center px-4 pt-[8vh] pb-16 sm:px-6 sm:pt-[14vh] sm:pb-20">

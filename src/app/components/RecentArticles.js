@@ -2,36 +2,36 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getUserId } from "../../lib/getUserId";
+import { authClient } from "../../lib/auth-client";
 import { BookmarkIcon, XIcon } from "./icons";
 
 export default function RecentArticles() {
-  const [articles, setArticles] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState(null);
+  const { data: session, isPending } = authClient.useSession();
+  const userId = session?.user && !session.user.isAnonymous ? session.user.id : null;
+  // Tagged with the user it was fetched for, so a sign-in/out never shows a stale list
+  const [fetched, setFetched] = useState({ userId: null, articles: [] });
 
   useEffect(() => {
-    const id = getUserId();
-    setUserId(id);
-    if (!id) {
-      setLoading(false);
-      return;
-    }
-
-    fetch(`/api/recent-articles?userId=${id}`)
+    if (!userId) return;
+    fetch("/api/recent-articles")
       .then((res) => res.json())
-      .then((data) => setArticles(data.articles ?? []))
-      .catch((err) => console.error("Failed to load recent articles:", err))
-      .finally(() => setLoading(false));
-  }, []);
+      .then((data) => setFetched({ userId, articles: data.articles ?? [] }))
+      .catch((err) => {
+        console.error("Failed to load recent articles:", err);
+        setFetched({ userId, articles: [] });
+      });
+  }, [userId]);
+
+  const loading = isPending || (userId !== null && fetched.userId !== userId);
+  const articles = userId && fetched.userId === userId ? fetched.articles : [];
 
   const handleRemove = async (articleId) => {
     // Optimistic update — remove from UI immediately
-    setArticles((prev) => prev.filter((a) => a.articleId !== articleId));
+    setFetched((prev) => ({ ...prev, articles: prev.articles.filter((a) => a.articleId !== articleId) }));
 
     try {
       const res = await fetch(
-        `/api/save-article?userId=${userId}&articleId=${articleId}`,
+        `/api/save-article?articleId=${articleId}`,
         { method: "DELETE" }
       );
       if (!res.ok) throw new Error("Unsave failed");
