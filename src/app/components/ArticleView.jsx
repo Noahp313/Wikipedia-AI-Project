@@ -7,6 +7,7 @@ import SaveArticleButton from "./SaveArticleButton";
 import LevelPicker from "./LevelPicker";
 import MarkdownContent from "./MarkdownContent";
 import { normalizeLevel } from "../../lib/explanationLevels";
+import { usedImages } from "../../lib/markdown";
 import { readNdjson } from "../../lib/readNdjson";
 import { updateArticleAction } from "../../lib/actions/updateArticle";
 import {
@@ -173,8 +174,10 @@ function sourceStatusStyle(status) {
   }
 }
 
-// Provenance tags: the generation dot (sourceStatus) and a "User edited" tag
-// are independent — a section shows whichever apply, or both.
+// Provenance tags: the generation dot (sourceStatus), a "Verified example" tag
+// (a worked example whose calculations were checked by running code, see
+// lib/verifiedExamples.js) and a "User edited" tag are independent — a section
+// shows whichever apply.
 function ProvenanceTags({ section }) {
   const hasGeneration = Boolean(section.sourceStatus);
   const { label, color } = sourceStatusStyle(section.sourceStatus);
@@ -187,6 +190,14 @@ function ProvenanceTags({ section }) {
           title={label}
           aria-label={label}
         />
+      )}
+      {section.verifiedExamples && (
+        <span
+          className="flex-shrink-0 rounded-md bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success"
+          title="This section's worked example was checked by running code"
+        >
+          Verified example
+        </span>
       )}
       {section.userEdited && (
         <span
@@ -254,8 +265,15 @@ function UsedTopics({ topics }) {
   );
 }
 
-function Sources({ sources }) {
-  if (!sources || sources.length === 0) return null;
+// "File:Chloroplast II.svg" → "Chloroplast II"
+function imageName(file) {
+  return file.replace(/^File:/, "").replace(/\.\w+$/, "");
+}
+
+// The Wikipedia articles the text drew on, then the images it shows (with the
+// author and license the credit line under each image also gives).
+function Sources({ sources = [], images = [] }) {
+  if (sources.length === 0 && images.length === 0) return null;
 
   return (
     <SidebarSection title="Sources">
@@ -274,6 +292,30 @@ function Sources({ sources }) {
           </li>
         ))}
       </ul>
+      {images.length > 0 && (
+        <>
+          <h4 className="mt-4 mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">Images</h4>
+          <ul className="space-y-2">
+            {images.map((img) => (
+              <li key={img.file} className="min-w-0">
+                <a
+                  href={img.descriptionUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={img.caption}
+                  className="group flex items-center gap-1.5 text-[13px] text-ink-muted hover:text-accent transition-colors"
+                >
+                  <span className="truncate">{imageName(img.file)}</span>
+                  <ExternalLinkIcon size={12} className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                </a>
+                <p className="truncate text-[11px] text-ink-faint">
+                  {[img.credit, img.license, "Wikimedia Commons"].filter(Boolean).join(" · ")}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </SidebarSection>
   );
 }
@@ -400,6 +442,8 @@ function ArticleBody({
   askContexts = [],
   articleRef,
   writing = false,
+  writingLabel = "Writing article…",
+  notice,
   streamingHeadings = [],
 }) {
   useAskHighlight(askContexts);
@@ -416,7 +460,7 @@ function ArticleBody({
         {writing ? (
           <span className="flex flex-shrink-0 items-center gap-2 text-sm text-ink-faint sm:pt-3">
             <SpinnerIcon size={15} className="text-accent" />
-            Writing article…
+            {writingLabel}
           </span>
         ) : (
           <div className="flex items-center gap-2 flex-shrink-0 sm:pt-1.5">
@@ -433,6 +477,13 @@ function ArticleBody({
           </div>
         )}
       </header>
+
+      {notice && (
+        // A directly requested table, image or chart that couldn't be made (shown once, not saved)
+        <p role="status" className="mb-8 rounded-lg bg-subtle px-4 py-3 text-sm text-ink-muted">
+          {notice}
+        </p>
+      )}
 
       {article.sections.map((s, i) => {
         const slug = slugify(s.heading);
@@ -1118,7 +1169,7 @@ function applyLiveEdits(article, edits) {
   for (const edit of edits) {
     const idx = sections.findIndex((s) => s.heading === edit.heading);
     if (edit.op === "amend" && idx !== -1) {
-      sections[idx] = { ...sections[idx], content: edit.content, sourceStatus: undefined };
+      sections[idx] = { ...sections[idx], content: edit.content, sourceStatus: undefined, verifiedExamples: undefined };
       headings.push(edit.heading);
       continue;
     }
@@ -1138,6 +1189,8 @@ export default function ArticleView({
   articleId,
   pastHistory = { original: null, sessions: [] },
   writing = false,
+  writingLabel,
+  notice,
 }) {
   // history is the full undo/redo stack for this page load only; historyIndex
   // points at the entry currently on screen. Each entry captures the full
@@ -1297,7 +1350,9 @@ export default function ArticleView({
       if (!edited) return { ...s, heading };
 
       changedHeadings.push(heading);
-      return { ...s, heading, userEdited: true };
+      // The reader may have changed the checked example, so it's no longer vouched for
+      const { verifiedExamples: _verified, ...rest } = s;
+      return { ...rest, heading, userEdited: true };
     });
 
     const summarize = (a) => JSON.stringify([a.title, a.sections.map((s) => [s.heading, s.content])]);
@@ -1434,7 +1489,7 @@ export default function ArticleView({
               onNavigate={() => setIsNavOpen(false)}
             />
             <UsedTopics topics={shownArticle.sourceTopics} />
-            <Sources sources={sources} />
+            <Sources sources={sources} images={usedImages(shownArticle.sections, shownArticle.images)} />
             <EditHistory history={history} historyIndex={historyIndex} onJump={jumpToHistory} />
             <PreviousSessions
               sessions={pastHistory.sessions}
@@ -1462,6 +1517,8 @@ export default function ArticleView({
               askContexts={[...chatContexts, ...askedContexts]}
               articleRef={articleRef}
               writing={writing}
+              writingLabel={writingLabel}
+              notice={notice}
               streamingHeadings={live ? live.headings : []}
             />
           )}

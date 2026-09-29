@@ -35,15 +35,14 @@ export function markdownGuidelines(policy) {
   const tables = asked("tables")
     ? `- The reader explicitly asked for a table — include one where it fits best (an explicit request always overrides their settings).`
     : on("tables")
-    ? `- A table when comparing items across the same attributes, or for structured data — e.g. a payoff matrix in game theory, a truth table, a comparison of properties or classifications, a timeline of dates.
-- When a concept is much easier to grasp through a small concrete worked example, include one — as a table where it has a grid shape (e.g. the payoffs of a 2×2 game when explaining an equilibrium) — rather than only naming the example.`
+    ? `- Tables: the default is NONE. Use one only when the reader's question is itself about data with a grid shape, so that prose would plainly be worse — e.g. a payoff matrix when the question is about a game's equilibrium, a truth table when it's about a logic operator, a side-by-side comparison when the reader asks to compare things. Never add a table just to summarize or restate text.`
     : `- Do NOT use tables — the reader turned them off.`;
 
   const chartHow = `Write it as a Mermaid code block ("\`\`\`mermaid" … "\`\`\`"): flowchart, timeline or mindmap for a process, cycle, sequence of stages or hierarchy; xychart-beta (bar/line) or pie for a numeric comparison, using only figures stated in the source material or firmly established. At most ~12 nodes or data points, short labels. Never diagram or chart anything you'd have to guess at.`;
   const charts = asked("charts")
     ? `- The reader explicitly asked for a diagram or chart — include one (an explicit request always overrides their settings). ${chartHow}`
     : on("charts")
-    ? `- A diagram or chart ONLY when it is much clearer as a picture than as prose. At most ONE in the whole article — most articles need none. ${chartHow}`
+    ? `- Diagrams and charts: the default is NONE. Add one only when the reader's question is centrally about something that is inherently visual — a multi-stage process or cycle, a hierarchy, or a numeric comparison — and a picture is much clearer than prose. At most ONE in the whole article. ${chartHow}`
     : `- Do NOT include diagrams or charts — the reader turned them off.`;
 
   const images = on("images") ? "" : `- Do NOT include images — the reader turned them off.\n`;
@@ -74,11 +73,12 @@ export function imageMenuPrompt(images, alreadyUsed, policy) {
   const remaining = Math.max(policy.maxImages - alreadyUsed, 0);
   const when = policy.requested.includes("images")
     ? `- The reader explicitly asked for an image — include the most relevant one from this list (an explicit request always overrides their settings). If none of them fits, don't force one.`
-    : `- Add an image only where it genuinely helps understanding: a diagram of the structure or process being explained, or a picture of the subject itself. Never add one as decoration.
-- Most articles need at most ONE image — the single most useful one. Add a second only if it shows something clearly different that the text relies on.`;
-  return `IMAGES — real images from the source Wikipedia articles, the ONLY images you may use:
+    : `- The default is NO image. Add one only when an image on this list is directly about what the reader asked — a diagram of the exact structure or process being explained, or a picture of the subject itself — and the text is clearly easier to follow with it. Never add one as decoration or because it's loosely related.
+- At most ONE image in the article unless a second shows something clearly different that the text relies on.`;
+  return `IMAGES — real images from Wikipedia and Wikimedia Commons, the ONLY images you may use:
 ${menu}
 ${when}
+- Judge each image only by its caption. Skip any whose caption doesn't clearly match the subject, or that is in another language or says its labels are (e.g. "with Czech labels") — the reader needs English labels.
 - Hard limit: one per section and ${remaining} more in the whole article; never reuse one.
 - To add one, put ![short caption in your own words](image:N) on its own line in that section's content, right after the paragraph it illustrates.`;
 }
@@ -111,8 +111,47 @@ export function countImageRefs(sections) {
   return sections.reduce((n, s) => n + ((typeof s.content === "string" && s.content.match(IMAGE_REF)) || []).length, 0);
 }
 
+// The menu images the article actually shows, in reading order, once each —
+// for the Sources panel. Only images the renderer would display count.
+export function usedImages(sections, images) {
+  if (!Array.isArray(images)) return [];
+  const used = new Map();
+  for (const s of sections) {
+    if (typeof s.content !== "string") continue;
+    for (const [, , n] of s.content.matchAll(IMAGE_REF)) {
+      const image = images[Number(n) - 1];
+      if (image && isWikimediaUrl(image.url) && !used.has(image.file)) used.set(image.file, image);
+    }
+  }
+  return [...used.values()];
+}
+
 export function countDiagrams(sections) {
   return sections.reduce((n, s) => n + ((typeof s.content === "string" && s.content.match(DIAGRAM_BLOCK)) || []).length, 0);
+}
+
+// A GFM table: a pipe row followed by its |---| separator row
+const TABLE = /^[ \t]*\|.*\|[ \t]*\n[ \t]*\|?[ \t]*:?-{3,}/gm;
+
+export function countTables(sections) {
+  return sections.reduce((n, s) => n + ((typeof s.content === "string" && s.content.match(TABLE)) || []).length, 0);
+}
+
+const UNMET_NOTES = {
+  tables: "No table was added — nothing here fit one.",
+  images: "I couldn't find a suitable image in Wikipedia or Wikimedia Commons for this. A diagram might work instead — ask for one.",
+  charts: "No chart was added — there wasn't a clear structure or reliable figures to draw.",
+};
+
+// A reader who directly asked for a feature is told when the article ends up
+// without it, rather than the request silently not happening. Built from what
+// the article actually contains, so it never claims something that isn't there.
+export function unmetRequestNote(requested, sections) {
+  const count = { tables: countTables, images: countImageRefs, charts: countDiagrams };
+  return requested
+    .filter((id) => count[id](sections) === 0)
+    .map((id) => UNMET_NOTES[id])
+    .join(" ");
 }
 
 // Drops image references that aren't on the menu, repeat an image, or exceed

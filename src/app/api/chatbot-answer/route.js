@@ -10,12 +10,22 @@ import {
   markdownGuidelines,
   mediaPolicy,
   repairLatexEscapes,
+  unmetRequestNote,
 } from "../../../lib/markdown";
+import { withCommonsImages } from "../../../lib/wikiImages";
 import { normalizeFeatures, requestedFeatures } from "../../../lib/features";
 import { ndjsonResponse } from "../../../lib/ndjsonResponse";
 import { getSessionUser } from "../../../lib/session";
 import { userChatRateLimit } from "../../../lib/rateLimit";
 import { levelInstructions, normalizeLevel } from "../../../lib/explanationLevels";
+import {
+  examplesNeedChecking,
+  examplesPrompt,
+  generateVerifiedExamples,
+  insertExamples,
+  requestsExamples,
+  withExampleProvenance,
+} from "../../../lib/verifiedExamples";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
 const VALID_SOURCE_STATUSES = ["source", "hybrid", "generated"];
@@ -75,7 +85,8 @@ ${lines.join(`\n`)}
 // The article's image menu as sent by the client — only well-formed Wikimedia
 // entries are trusted (the renderer applies the same host check). Invalid
 // entries become null rather than being removed, so image numbers don't shift.
-const MAX_IMAGE_MENU = 12;
+// Up to 12 from the source articles plus Commons results from direct requests.
+const MAX_IMAGE_MENU = 20;
 function articleImages(article) {
   if (!Array.isArray(article.images)) return [];
   return article.images
@@ -87,8 +98,24 @@ function articleImages(article) {
     );
 }
 
-function buildAnswerPrompt({ query, history, currentArticle, sourceText, contexts = [], level, policy }) {
-  const images = articleImages(currentArticle);
+// What the examples pre-pass needs to know about the article: the parts the
+// reader selected, else the whole article (capped), plus any source material.
+const MAX_EXAMPLE_CONTEXT_CHARS = 12_000;
+function exampleContext(currentArticle, contexts, sourceText) {
+  const sectionText = (heading) =>
+    `${heading}\n${currentArticle.sections.find((s) => s.heading === heading)?.content ?? ""}`;
+  const selected = contexts.map((c) => (c.text ? `From "${c.heading}": ${c.text}` : sectionText(c.heading)));
+  const body =
+    selected.length > 0
+      ? `The reader selected:\n${selected.join(`\n\n`)}`
+      : currentArticle.sections.map((s) => sectionText(s.heading)).join(`\n\n`);
+  const article = `Article: ${currentArticle.title}\n\n${body}`.slice(0, MAX_EXAMPLE_CONTEXT_CHARS);
+  return sourceText
+    ? `${article}\n\nSource material:\n${sourceText.slice(0, MAX_EXAMPLE_CONTEXT_CHARS)}`
+    : article;
+}
+
+function buildAnswerPrompt({ query, history, currentArticle, sourceText, contexts = [], level, policy, images, examples = [] }) {
   return `
 You are updating a Wikipedia-style article in response to a reader's follow-up question.
 You are given the CURRENT ARTICLE for context. Return a direct answer plus a list of EDITS —
@@ -155,6 +182,12 @@ ${markdownGuidelines(policy)}
   change the level of existing text ("explain this more simply") is an explicit request for an amend.
 
 ${imageMenuPrompt(images, countImageRefs(currentArticle.sections), policy)}
+
+${examplesPrompt(examples)}${
+    examples.length > 0
+      ? `\n- The reader asked for examples, so this is an explicit request for an edit: place the examples in the\n  "content" of an amend or add (never in "answer").`
+      : ""
+  }
 `;
 }
 
@@ -196,12 +229,16 @@ function applyEdits(currentArticle, edits) {
     if (edit.op === "amend" && idx !== -1) {
       if (!amendedHeadings.includes(edit.heading)) amendedHeadings.push(edit.heading);
       // Keep the user-edited tag: the amend rewrites on top of the user's text, so both contributed.
-      sections[idx] = {
-        heading: edit.heading,
-        content: edit.content,
-        sourceStatus: edit.sourceStatus,
-        ...(sections[idx].userEdited && { userEdited: true }),
-      };
+      sections[idx] = withExampleProvenance(
+        {
+          heading: edit.heading,
+          content: edit.content,
+          sourceStatus: edit.sourceStatus,
+          ...(sections[idx].userEdited && { userEdited: true }),
+        },
+        edit.exampleInserted,
+        edit.exampleVerified
+      );
       changedHeadings.push(edit.heading);
       continue;
     }
@@ -213,7 +250,13 @@ function applyEdits(currentArticle, edits) {
       suffix += 1;
     }
     usedHeadings.add(heading);
-    sections.push({ heading, content: edit.content, sourceStatus: edit.sourceStatus });
+    sections.push(
+      withExampleProvenance(
+        { heading, content: edit.content, sourceStatus: edit.sourceStatus },
+        edit.exampleInserted,
+        edit.exampleVerified
+      )
+    );
     changedHeadings.push(heading);
     addedHeadings.push(heading);
   }
@@ -294,8 +337,6 @@ export async function POST(req) {
     maxDiagrams: Math.max(basePolicy.maxDiagrams, countDiagrams(currentArticle.sections)),
   };
 
-  const prompt = buildAnswerPrompt({ query: query.trim(), history, currentArticle, sourceText, contexts, level, policy });
-
   // With parts of the article selected, amends stay inside the selected
   // sections — "rewrite this" must not touch anything else. New sections are
   // still allowed.
@@ -319,6 +360,34 @@ export async function POST(req) {
   // written, then { t: "done", ... } with the same payload the non-streaming
   // version returned. The answer itself arrives only with "done".
   return ndjsonResponse(async (send) => {
+    // Asked for examples with something to compute: write and code-check them
+    // first (see lib/verifiedExamples.js). Otherwise the writer handles them.
+    const request = query.trim();
+    const context = requestsExamples(request) ? exampleContext(currentArticle, contexts, sourceText) : "";
+    const examples =
+      context && (await examplesNeedChecking({ request, context, source: "examples-gate" }))
+        ? await generateVerifiedExamples({ request, context, level, source: "verify-examples" })
+        : [];
+    // Directly asked for an image: add Wikimedia Commons results to the menu,
+    // since the source articles often don't have a fitting one
+    const baseImages = articleImages(currentArticle);
+    const images = policy.requested.includes("images")
+      ? (await withCommonsImages(baseImages, request, currentArticle.title)).slice(0, MAX_IMAGE_MENU)
+      : baseImages;
+    const addedImages = images.slice(baseImages.length);
+
+    const prompt = buildAnswerPrompt({
+      query: request,
+      history,
+      currentArticle,
+      sourceText,
+      contexts,
+      level,
+      policy,
+      images,
+      examples,
+    });
+
     let text = "";
     const sentContent = [];
 
@@ -329,7 +398,8 @@ export async function POST(req) {
       edits.forEach((edit, i) => {
         if (!isStreamable(edit) || sentContent[i] === edit.content) return;
         sentContent[i] = edit.content;
-        send({ t: "edit", i, op: edit.op, heading: edit.heading, content: repairLatexEscapes(edit.content) });
+        const content = insertExamples(repairLatexEscapes(edit.content), examples, new Set(), { partial: true }).content;
+        send({ t: "edit", i, op: edit.op, heading: edit.heading, content });
       });
     }
 
@@ -343,9 +413,14 @@ export async function POST(req) {
 
     // A missing/unknown sourceStatus is labelled "generated" (the most cautious
     // provenance) rather than dropping an edit the reader already saw stream in.
+    const usedExamples = new Set();
     const rawEdits = (Array.isArray(parsed.edits) ? parsed.edits : []).map((e) => {
       if (!e || typeof e !== "object") return e;
-      const edit = typeof e.content === "string" ? { ...e, content: repairLatexEscapes(e.content) } : e;
+      let edit = e;
+      if (typeof e.content === "string") {
+        const { content, inserted, verified } = insertExamples(repairLatexEscapes(e.content), examples, usedExamples);
+        edit = { ...e, content, exampleInserted: inserted, exampleVerified: verified };
+      }
       return VALID_SOURCE_STATUSES.includes(edit.sourceStatus) ? edit : { ...edit, sourceStatus: "generated" };
     });
     const wellFormedEdits = rawEdits.filter(isValidEdit);
@@ -370,14 +445,25 @@ export async function POST(req) {
       validEdits.length > 0
         ? applyEdits(currentArticle, validEdits)
         : { article: currentArticle, changedHeadings: [], addedHeadings: [], amendedHeadings: [] };
-    // Same media caps as a new article (menu-only images, one diagram)
+    // Same media caps as a new article (menu-only images, one diagram). Commons
+    // results are kept on the article so later edits can use them too.
     const updatedArticle =
       validEdits.length > 0
-        ? { ...mergedArticle, sections: enforceMediaLimits(mergedArticle.sections, articleImages(currentArticle), policy) }
+        ? {
+            ...mergedArticle,
+            sections: enforceMediaLimits(mergedArticle.sections, images, policy),
+            ...(addedImages.length > 0 && { images: [...(currentArticle.images ?? []), ...addedImages] }),
+          }
         : mergedArticle;
 
     const answer =
-      [parsed.answer.trim(), buildChangeNote(addedHeadings, amendedHeadings)].filter(Boolean).join(" ") ||
+      [
+        parsed.answer.trim(),
+        buildChangeNote(addedHeadings, amendedHeadings),
+        unmetRequestNote(policy.requested, updatedArticle.sections),
+      ]
+        .filter(Boolean)
+        .join(" ") ||
       "Nothing in the article needed to change.";
 
     send({

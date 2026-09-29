@@ -41,7 +41,7 @@ async function waitForRateLimit(model, totalWaitedMs = 0) {
     }
 }
 
-async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, temperature }) {
+async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, temperature, tools, timeoutMs = FETCH_TIMEOUT_MS }) {
     const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
 
     const generationConfig = {
@@ -50,7 +50,7 @@ async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, tem
     };
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     const start = Date.now();
     let response;
@@ -60,6 +60,7 @@ async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, tem
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: prompt }] }],
+                ...(tools && { tools }),
                 ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
             }),
             signal: controller.signal,
@@ -67,8 +68,8 @@ async function fetchGemini({ prompt, model, apiVersion = "v1", json = false, tem
     } catch (err) {
         const elapsed = Date.now() - start;
         if (err.name === "AbortError") {
-            console.log(`[fetchGemini] ${model} TIMED OUT after ${elapsed}ms (limit ${FETCH_TIMEOUT_MS}ms)`);
-            const timeoutErr = new Error(`Gemini API timeout after ${FETCH_TIMEOUT_MS}ms`);
+            console.log(`[fetchGemini] ${model} TIMED OUT after ${elapsed}ms (limit ${timeoutMs}ms)`);
+            const timeoutErr = new Error(`Gemini API timeout after ${timeoutMs}ms`);
             timeoutErr.status = 504; // treated as transient by callGemini's retry/fallback logic
             timeoutErr.code = "TIMEOUT";
             throw timeoutErr;
@@ -142,7 +143,12 @@ export async function callGemini({ source = "unknown", ...options }) {
     }
 }
 
-async function callGeminiWithRetry({ prompt, model, apiVersion = "v1", json = false, temperature }, attempt, stats) {
+// tools: Gemini tool declarations, e.g. [{ codeExecution: {} }] (needs apiVersion "v1beta").
+// timeoutMs: per-attempt timeout, for calls that legitimately run long.
+// maxRetries: retries before falling back (default MAX_RETRIES) — lower it for
+// long calls, where retrying a timeout multiplies the wait.
+async function callGeminiWithRetry(options, attempt, stats) {
+    const { model } = options;
     stats.model = model;
     const rateLimitStart = Date.now();
     await waitForRateLimit(model);
@@ -153,22 +159,22 @@ async function callGeminiWithRetry({ prompt, model, apiVersion = "v1", json = fa
     }
 
     try {
-        return await fetchGemini({ prompt, model, apiVersion, json, temperature });
+        return await fetchGemini(options);
     } catch (err) {
         const isTransient = err.status === 429 || (err.status >= 500 && err.status < 600);
         if (err.code === "TIMEOUT") stats.timeouts++;
 
-        if (isTransient && attempt < MAX_RETRIES) {
+        if (isTransient && attempt < (options.maxRetries ?? MAX_RETRIES)) {
             console.log(`[callGemini] ${model} retrying, attempt ${attempt + 1}`);
             stats.retries++;
             await sleep(RETRY_DELAY_MS * 2 ** (attempt));
-            return callGeminiWithRetry({ prompt, model, apiVersion, json, temperature }, attempt + 1, stats);
+            return callGeminiWithRetry(options, attempt + 1, stats);
         }
 
         if (isTransient && model === DEFAULT_MODEL) {
             console.warn("Falling back to flash-lite after exhausted retries");
             stats.fellBack = true;
-            return callGeminiWithRetry({ prompt, model: FALLBACK_MODEL, apiVersion, json, temperature }, 0, stats);
+            return callGeminiWithRetry({ ...options, model: FALLBACK_MODEL }, 0, stats);
         }
 
         throw err;

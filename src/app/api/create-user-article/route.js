@@ -1,13 +1,28 @@
 import { getCachedArticle, recordArticleOpen, setCachedUserArticle } from "../../../lib/cache";
 import { streamGemini } from "../../../lib/geminiClient";
 import { fixJsonEscapes, parsePartialJson } from "../../../lib/partialJson";
-import { enforceMediaLimits, imageMenuPrompt, markdownGuidelines, mediaPolicy, repairLatexEscapes } from "../../../lib/markdown";
+import {
+  enforceMediaLimits,
+  imageMenuPrompt,
+  markdownGuidelines,
+  mediaPolicy,
+  repairLatexEscapes,
+  unmetRequestNote,
+} from "../../../lib/markdown";
 import { normalizeFeatures, requestedFeatures } from "../../../lib/features";
-import { fetchArticleImages } from "../../../lib/wikiImages";
+import { fetchArticleImages, withCommonsImages } from "../../../lib/wikiImages";
 import { ndjsonResponse } from "../../../lib/ndjsonResponse";
 import { getSessionUser } from "../../../lib/session";
 import { userArticleRateLimit } from "../../../lib/rateLimit";
 import { levelInstructions, normalizeLevel } from "../../../lib/explanationLevels";
+import {
+  examplesNeedChecking,
+  examplesPrompt,
+  generateVerifiedExamples,
+  insertExamples,
+  requestsExamples,
+  withExampleProvenance,
+} from "../../../lib/verifiedExamples";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
 const MAX_IMAGE_MENU = 12;
@@ -46,7 +61,7 @@ function buildSourceText(relevantTopics, cachedArticles) {
     .join("\n\n");
 }
 
-function buildGroundedPrompt(query, sourceText, level, images, policy) {
+function buildGroundedPrompt(query, sourceText, level, images, policy, examples) {
   return `
   You are a Wikipedia-style expert writer synthesizing a focused answer to a user's query, using only the source material below.
 
@@ -77,10 +92,12 @@ function buildGroundedPrompt(query, sourceText, level, images, policy) {
   ${markdownGuidelines(policy)}
 
   ${imageMenuPrompt(images, 0, policy)}
+
+  ${examplesPrompt(examples)}
   `;
 }
 
-function buildUngroundedPrompt(query, level, policy) {
+function buildUngroundedPrompt(query, level, images, policy, examples) {
   return `
   You are a Wikipedia-style expert writer answering a user's query from your own general knowledge. No source material was available for this query.
 
@@ -103,6 +120,10 @@ function buildUngroundedPrompt(query, level, policy) {
   ${levelInstructions(level)}
 
   ${markdownGuidelines(policy)}
+
+  ${imageMenuPrompt(images, 0, policy)}
+
+  ${examplesPrompt(examples)}
   `;
 }
 
@@ -144,13 +165,23 @@ function parseArticleJson(text) {
 async function streamUserArticle({ send, user, query, sourceText, devStatus, level, sourceTopics, images, features }) {
   // The reader's selection, plus anything the query directly asks for ("with a table")
   const policy = mediaPolicy(features, requestedFeatures(query));
-  const prompt =
-    devStatus === "grounded"
-      ? buildGroundedPrompt(query, sourceText, level, images, policy)
-      : buildUngroundedPrompt(query, level, policy);
 
   // The image menu goes to the client up front so images show while streaming
   send({ t: "start", sourceTopics, level, images });
+
+  // Asked for examples with something to compute: write and code-check them
+  // first, so the writer only places them. Otherwise the writer handles them.
+  let examples = [];
+  if (requestsExamples(query) && (await examplesNeedChecking({ request: query, context: sourceText, source: "examples-gate" }))) {
+    send({ t: "stage", stage: "examples" });
+    examples = await generateVerifiedExamples({ request: query, context: sourceText, level, source: "verify-examples" });
+    send({ t: "stage", stage: "writing" });
+  }
+
+  const prompt =
+    devStatus === "grounded"
+      ? buildGroundedPrompt(query, sourceText, level, images, policy, examples)
+      : buildUngroundedPrompt(query, level, images, policy, examples);
 
   let text = "";
   let sentTitle;
@@ -170,7 +201,10 @@ async function streamUserArticle({ send, user, query, sourceText, devStatus, lev
       if (!s || typeof s !== "object") return;
       const section = {
         heading: typeof s.heading === "string" ? s.heading : "",
-        content: typeof s.content === "string" ? repairLatexEscapes(s.content) : "",
+        content:
+          typeof s.content === "string"
+            ? insertExamples(repairLatexEscapes(s.content), examples, new Set(), { partial: true }).content
+            : "",
         ...(typeof s.sourceStatus === "string" && { sourceStatus: s.sourceStatus }),
       };
       const prev = sentSections[i];
@@ -183,8 +217,12 @@ async function streamUserArticle({ send, user, query, sourceText, devStatus, lev
   }
 
   const article = parseArticleJson(text);
+  const usedExamples = new Set();
   article.sections = enforceMediaLimits(
-    article.sections.map((s) => ({ ...s, content: repairLatexEscapes(s.content) })),
+    article.sections.map((s) => {
+      const { content, inserted, verified } = insertExamples(repairLatexEscapes(s.content), examples, usedExamples);
+      return withExampleProvenance({ ...s, content }, inserted, verified);
+    }),
     images,
     policy
   );
@@ -200,7 +238,8 @@ async function streamUserArticle({ send, user, query, sourceText, devStatus, lev
   // Counts as opened: the reader watched it being written
   await recordArticleOpen(user, articleId);
 
-  send({ t: "done", articleId, article });
+  // Told once, right after writing (not saved): a directly requested table, image or chart that couldn't be made
+  send({ t: "done", articleId, article, notice: unmetRequestNote(policy.requested, article.sections) });
 }
 
 export async function POST(req) {
@@ -260,6 +299,12 @@ export async function POST(req) {
     if (!sourceText) {
       return Response.json({ error: "No matching cached sections found" }, { status: 404 });
     }
+  }
+
+  // Directly asked for an image: the source articles often don't have a fitting
+  // one, so Wikimedia Commons results are added to the menu
+  if (requestedFeatures(cleanedQuery).includes("images")) {
+    images = await withCommonsImages(images, cleanedQuery, uniqueTopicNames[0] ?? cleanedQuery);
   }
 
   return ndjsonResponse((send) =>

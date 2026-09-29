@@ -1,6 +1,6 @@
 // Optional content features the reader can switch on or off from the search
-// bar. On = used where it fits (still capped, see lib/markdown.js); off = never
-// used. Stored on the article so later chat edits follow the same choice.
+// bar. On = used only when clearly relevant to the question (still capped, see
+// lib/markdown.js); off = never used. Stored on the article so later chat edits follow the same choice.
 // Shared by client and server, so no server-only imports.
 export const FEATURES = [
   { id: "tables", label: "Tables", description: "Comparisons, data and worked examples" },

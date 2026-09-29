@@ -52,6 +52,9 @@ export default function NewArticleStream({ pendingId }) {
       await readNdjson(res, (event) => {
         if (event.t === "start") {
           apply((a) => ({ ...a, sourceTopics: event.sourceTopics, level: event.level, images: event.images }));
+        } else if (event.t === "stage") {
+          // The examples pre-pass (lib/verifiedExamples.js) runs before any text arrives
+          setState((prev) => ({ ...prev, stage: event.stage }));
         } else if (event.t === "title") {
           apply((a) => ({ ...a, title: event.title }));
         } else if (event.t === "section") {
@@ -64,7 +67,7 @@ export default function NewArticleStream({ pendingId }) {
           finished = true;
           // Next's router picks this up, so back/refresh behave like a normal article page
           window.history.replaceState(null, "", `/article/${event.articleId}`);
-          setState({ status: "done", article: event.article, articleId: event.articleId });
+          setState({ status: "done", article: event.article, articleId: event.articleId, notice: event.notice });
         } else if (event.t === "error") {
           throw new Error(event.message);
         }
@@ -117,8 +120,17 @@ export default function NewArticleStream({ pendingId }) {
 
   if (state.status === "done") {
     // A fresh mount (new key), so the interactive view starts its history from the final article
-    return <ArticleView key={state.articleId} article={state.article} articleId={state.articleId} />;
+    return (
+      <ArticleView key={state.articleId} article={state.article} articleId={state.articleId} notice={state.notice} />
+    );
   }
 
-  return <ArticleView key="writing" article={state.article} writing />;
+  return (
+    <ArticleView
+      key="writing"
+      article={state.article}
+      writing
+      writingLabel={state.stage === "examples" ? "Checking examples…" : undefined}
+    />
+  );
 }
