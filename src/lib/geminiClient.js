@@ -174,3 +174,173 @@ async function callGeminiWithRetry({ prompt, model, apiVersion = "v1", json = fa
         throw err;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Streaming. Same rate limiting, retries/fallback and telemetry as callGemini,
+// with two differences: retries only happen before the first chunk (text the
+// reader has already seen can't be silently replaced), and the timeout is an
+// idle timeout between chunks, since a long answer can legitimately take more
+// than FETCH_TIMEOUT_MS overall.
+
+async function openGeminiStream({ prompt, model, apiVersion = "v1", json = false, temperature }) {
+    const url = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:streamGenerateContent?alt=sse&key=${process.env.GEMINI_API_KEY}`;
+
+    const generationConfig = {
+        ...(json && { responseMimeType: "application/json" }),
+        ...(temperature !== undefined && { temperature }),
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    let response;
+    try {
+        response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                ...(Object.keys(generationConfig).length > 0 && { generationConfig }),
+            }),
+            signal: controller.signal,
+        });
+    } catch (err) {
+        if (err.name === "AbortError") {
+            const timeoutErr = new Error(`Gemini API timeout after ${FETCH_TIMEOUT_MS}ms`);
+            timeoutErr.status = 504;
+            timeoutErr.code = "TIMEOUT";
+            throw timeoutErr;
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        console.log(`[streamGemini] ${model} FAILED (status ${response.status}): ${errorBody.slice(0, 200)}`);
+        const err = new Error(`Gemini API error (${response.status}): ${errorBody}`);
+        err.status = response.status;
+        throw err;
+    }
+
+    return { response, controller };
+}
+
+async function openGeminiStreamWithRetry(options, attempt, stats) {
+    const { model } = options;
+    stats.model = model;
+    const rateLimitStart = Date.now();
+    await waitForRateLimit(model);
+    stats.rateLimitWaitMs += Date.now() - rateLimitStart;
+
+    try {
+        return await openGeminiStream(options);
+    } catch (err) {
+        const isTransient = err.status === 429 || (err.status >= 500 && err.status < 600);
+        if (err.code === "TIMEOUT") stats.timeouts++;
+
+        if (isTransient && attempt < MAX_RETRIES) {
+            console.log(`[streamGemini] ${model} retrying, attempt ${attempt + 1}`);
+            stats.retries++;
+            await sleep(RETRY_DELAY_MS * 2 ** attempt);
+            return openGeminiStreamWithRetry(options, attempt + 1, stats);
+        }
+
+        if (isTransient && model === DEFAULT_MODEL) {
+            console.warn("[streamGemini] Falling back to flash-lite after exhausted retries");
+            stats.fellBack = true;
+            return openGeminiStreamWithRetry({ ...options, model: FALLBACK_MODEL }, 0, stats);
+        }
+
+        throw err;
+    }
+}
+
+// Yields the response text as it arrives (thought parts excluded).
+export async function* streamGemini({ source = "unknown", ...options }) {
+    const requestedModel = options.model ?? DEFAULT_MODEL;
+    const stats = { model: requestedModel, retries: 0, timeouts: 0, rateLimitWaitMs: 0, fellBack: false };
+    const start = Date.now();
+    let usage;
+    let error;
+
+    try {
+        const { response, controller } = await openGeminiStreamWithRetry(
+            { ...options, model: requestedModel },
+            0,
+            stats
+        );
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+            const idle = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+            let chunk;
+            try {
+                chunk = await reader.read();
+            } catch (err) {
+                if (err.name === "AbortError") {
+                    stats.timeouts++;
+                    const timeoutErr = new Error(`Gemini stream stalled for ${FETCH_TIMEOUT_MS}ms`);
+                    timeoutErr.status = 504;
+                    timeoutErr.code = "TIMEOUT";
+                    throw timeoutErr;
+                }
+                throw err;
+            } finally {
+                clearTimeout(idle);
+            }
+            if (chunk.done) break;
+
+            buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
+            let boundary;
+            while ((boundary = buffer.indexOf("\n\n")) !== -1) {
+                const event = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+                const data = event
+                    .split("\n")
+                    .filter((line) => line.startsWith("data:"))
+                    .map((line) => line.slice(5).trim())
+                    .join("");
+                if (!data) continue;
+
+                const parsed = JSON.parse(data);
+                usage = parsed.usageMetadata ?? usage;
+                const text = (parsed.candidates?.[0]?.content?.parts ?? [])
+                    .filter((part) => !part.thought && typeof part.text === "string")
+                    .map((part) => part.text)
+                    .join("");
+                if (text) yield text;
+            }
+        }
+
+        console.log(`[streamGemini] ${stats.model} finished in ${Date.now() - start}ms`);
+    } catch (err) {
+        error = err;
+        throw err;
+    } finally {
+        recordGeminiCall({
+            timestamp: start,
+            source,
+            requestedModel,
+            model: stats.model,
+            durationMs: Date.now() - start,
+            rateLimitWaitMs: stats.rateLimitWaitMs,
+            retries: stats.retries,
+            timeouts: stats.timeouts,
+            fellBack: stats.fellBack,
+            inputTokens: usage?.promptTokenCount ?? 0,
+            outputTokens: (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0),
+            outcome: !error
+                ? "ok"
+                : error.code === "RATE_LIMIT_WAIT_EXCEEDED"
+                ? "rate-limited"
+                : error.code === "TIMEOUT"
+                ? "timeout"
+                : "error",
+            status: error?.status ?? null,
+        });
+    }
+}

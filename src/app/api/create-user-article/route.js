@@ -1,9 +1,35 @@
-import { getCachedArticle, setCachedUserArticle } from "../../../lib/cache";
-import { callGemini } from "../../../lib/geminiClient";
+import { getCachedArticle, recordArticleOpen, setCachedUserArticle } from "../../../lib/cache";
+import { streamGemini } from "../../../lib/geminiClient";
+import { fixJsonEscapes, parsePartialJson } from "../../../lib/partialJson";
+import { enforceMediaLimits, imageMenuPrompt, markdownGuidelines, mediaPolicy, repairLatexEscapes } from "../../../lib/markdown";
+import { normalizeFeatures, requestedFeatures } from "../../../lib/features";
+import { fetchArticleImages } from "../../../lib/wikiImages";
+import { ndjsonResponse } from "../../../lib/ndjsonResponse";
 import { getSessionUser } from "../../../lib/session";
 import { userArticleRateLimit } from "../../../lib/rateLimit";
+import { levelInstructions, normalizeLevel } from "../../../lib/explanationLevels";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
+const MAX_IMAGE_MENU = 12;
+
+// The source topics' Wikipedia images, as one numbered menu for the writer.
+// Topics cached before images were collected get them fetched now.
+async function collectImages(topicNames, cachedArticles) {
+  const lists = await Promise.all(
+    topicNames.map((name) => {
+      const cached = cachedArticles[name];
+      if (!cached) return [];
+      if (Array.isArray(cached.images)) return cached.images;
+      const title = cached.sourceUrl ? decodeURIComponent(cached.sourceUrl.split("/wiki/")[1] ?? "").replace(/_/g, " ") : "";
+      return title ? fetchArticleImages(title) : [];
+    })
+  );
+  const seen = new Set();
+  return lists
+    .flat()
+    .filter((img) => !seen.has(img.file) && seen.add(img.file))
+    .slice(0, MAX_IMAGE_MENU);
+}
 
 function buildSourceText(relevantTopics, cachedArticles) {
   return relevantTopics
@@ -20,7 +46,7 @@ function buildSourceText(relevantTopics, cachedArticles) {
     .join("\n\n");
 }
 
-function buildGroundedPrompt(query, sourceText) {
+function buildGroundedPrompt(query, sourceText, level, images, policy) {
   return `
   You are a Wikipedia-style expert writer synthesizing a focused answer to a user's query, using only the source material below.
 
@@ -45,10 +71,16 @@ function buildGroundedPrompt(query, sourceText) {
   - Organize into natural sections (do NOT reuse the source headings verbatim unless they fit).
   - Mark each section's "sourceStatus": "source" if drawn entirely from the source material, "generated" if it had no coverage in the source and you wrote it from general knowledge, "hybrid" if it mixes both.
   - Write concise but informative paragraphs.
+
+  ${levelInstructions(level)}
+
+  ${markdownGuidelines(policy)}
+
+  ${imageMenuPrompt(images, 0, policy)}
   `;
 }
 
-function buildUngroundedPrompt(query) {
+function buildUngroundedPrompt(query, level, policy) {
   return `
   You are a Wikipedia-style expert writer answering a user's query from your own general knowledge. No source material was available for this query.
 
@@ -67,22 +99,14 @@ function buildUngroundedPrompt(query) {
   - Every section is written from general knowledge, so every "sourceStatus" must be "generated" — do not use "source" or "hybrid".
   - Be upfront in tone and content that this reflects general knowledge rather than a specific cited source; do not fabricate specifics (dates, figures, quotes) you're not confident in.
   - Organize into natural sections. Write concise but informative paragraphs.
+
+  ${levelInstructions(level)}
+
+  ${markdownGuidelines(policy)}
   `;
 }
 
-async function createUserArticle(query, sourceText, devStatus) {
-  const isGrounded = devStatus === "grounded";
-  const prompt = isGrounded
-    ? buildGroundedPrompt(query, sourceText)
-    : buildUngroundedPrompt(query);
-
-  const data = await callGemini({ source: "create-user-article", prompt, model: GEMINI_MODEL });
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!text) {
-    throw new Error("No text returned from Gemini API");
-  }
-
+function parseArticleJson(text) {
   let cleaned = text.trim().replace(/```json/g, "").replace(/```/g, "");
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
@@ -96,10 +120,10 @@ async function createUserArticle(query, sourceText, devStatus) {
 
   let parsed;
   try {
-    parsed = JSON.parse(jsonString);
+    parsed = JSON.parse(fixJsonEscapes(jsonString));
   } catch {
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(fixJsonEscapes(cleaned));
     } catch {
       console.error("Unable to parse Gemini JSON response:", cleaned);
       throw new Error("Invalid JSON returned from Gemini API");
@@ -114,6 +138,71 @@ async function createUserArticle(query, sourceText, devStatus) {
   return parsed;
 }
 
+// Streams the article as it's written: { t: "title" } and { t: "section", i }
+// events carry only what changed since the last event, then { t: "done" } once
+// it's parsed, validated and saved. Nothing is saved from a partial response.
+async function streamUserArticle({ send, user, query, sourceText, devStatus, level, sourceTopics, images, features }) {
+  // The reader's selection, plus anything the query directly asks for ("with a table")
+  const policy = mediaPolicy(features, requestedFeatures(query));
+  const prompt =
+    devStatus === "grounded"
+      ? buildGroundedPrompt(query, sourceText, level, images, policy)
+      : buildUngroundedPrompt(query, level, policy);
+
+  // The image menu goes to the client up front so images show while streaming
+  send({ t: "start", sourceTopics, level, images });
+
+  let text = "";
+  let sentTitle;
+  const sentSections = [];
+
+  for await (const chunk of streamGemini({ source: "create-user-article", prompt, model: GEMINI_MODEL, json: true })) {
+    text += chunk;
+    const partial = parsePartialJson(text);
+    if (!partial) continue;
+
+    if (typeof partial.title === "string" && partial.title !== sentTitle) {
+      sentTitle = partial.title;
+      send({ t: "title", title: sentTitle });
+    }
+
+    (Array.isArray(partial.sections) ? partial.sections : []).forEach((s, i) => {
+      if (!s || typeof s !== "object") return;
+      const section = {
+        heading: typeof s.heading === "string" ? s.heading : "",
+        content: typeof s.content === "string" ? repairLatexEscapes(s.content) : "",
+        ...(typeof s.sourceStatus === "string" && { sourceStatus: s.sourceStatus }),
+      };
+      const prev = sentSections[i];
+      if (prev && prev.heading === section.heading && prev.content === section.content && prev.sourceStatus === section.sourceStatus) {
+        return;
+      }
+      sentSections[i] = section;
+      send({ t: "section", i, section });
+    });
+  }
+
+  const article = parseArticleJson(text);
+  article.sections = enforceMediaLimits(
+    article.sections.map((s) => ({ ...s, content: repairLatexEscapes(s.content) })),
+    images,
+    policy
+  );
+  article.sourceTopics = sourceTopics;
+  article.level = level;
+  // The selection only (not one-off requests), so chat edits keep following it
+  article.features = features;
+  // The whole menu is kept (not just what's used) so chat edits can add from it later
+  article.images = images;
+
+  const articleId = await setCachedUserArticle(user.id, query, article);
+  if (!articleId) throw new Error("Couldn't save the article");
+  // Counts as opened: the reader watched it being written
+  await recordArticleOpen(user, articleId);
+
+  send({ t: "done", articleId, article });
+}
+
 export async function POST(req) {
   let body;
   try {
@@ -123,6 +212,8 @@ export async function POST(req) {
   }
 
   const { query, topics, devStatus } = body;
+  const level = normalizeLevel(body.level);
+  const features = normalizeFeatures(body.features);
 
   const user = await getSessionUser();
   if (!user) {
@@ -143,6 +234,7 @@ export async function POST(req) {
 
   let sourceText = "";
   let uniqueTopicNames = [];
+  let images = [];
 
   if (isGrounded) {
     if (!Array.isArray(topics)) {
@@ -160,21 +252,27 @@ export async function POST(req) {
     );
 
     sourceText = buildSourceText(topics, cachedArticles);
+    // Skip the lookup when images are off and the query doesn't ask for any
+    if (mediaPolicy(features, requestedFeatures(cleanedQuery)).maxImages > 0) {
+      images = await collectImages(uniqueTopicNames, cachedArticles);
+    }
 
     if (!sourceText) {
       return Response.json({ error: "No matching cached sections found" }, { status: 404 });
     }
   }
 
-  try {
-    const article = await createUserArticle(cleanedQuery, sourceText, devStatus);
-
-    article.sourceTopics = uniqueTopicNames;
-
-    const articleId = await setCachedUserArticle(user.id, cleanedQuery, article);
-
-    return Response.json({ article, articleId, status: "generated", devStatus });
-  } catch (err) {
-    return Response.json({ error: err.message }, { status: 500 });
-  }
+  return ndjsonResponse((send) =>
+    streamUserArticle({
+      send,
+      user,
+      query: cleanedQuery,
+      sourceText,
+      devStatus,
+      level,
+      sourceTopics: uniqueTopicNames,
+      images,
+      features,
+    })
+  );
 }

@@ -1,0 +1,172 @@
+// Section content is GitHub-flavored Markdown with LaTeX math, images picked
+// from the article's Wikipedia image menu, and (rarely) a Mermaid diagram.
+// Shared by the prompts (server) and the renderer (client), so no server-only imports.
+
+import { effectiveFeatures } from "./features";
+
+// Media limits, enforced on the server after generation (enforceMediaLimits) —
+// the prompt asks for restraint, this guarantees it.
+export const MAX_IMAGES_PER_SECTION = 1;
+export const MAX_IMAGES_PER_ARTICLE = 2;
+export const MAX_DIAGRAMS_PER_ARTICLE = 1;
+
+// What media this request may use: the reader's selected features (see
+// lib/features.js) plus anything they directly asked for. A direct request
+// always wins, and gets one extra over the usual cap so "add a chart" works
+// even when the article already has one.
+export function mediaPolicy(selected, requested = []) {
+  const features = effectiveFeatures(selected, requested);
+  const extra = (id) => (requested.includes(id) ? 1 : 0);
+  return {
+    features,
+    requested,
+    maxImages: features.includes("images") ? MAX_IMAGES_PER_ARTICLE + extra("images") : 0,
+    maxDiagrams: features.includes("charts") ? MAX_DIAGRAMS_PER_ARTICLE + extra("charts") : 0,
+  };
+}
+
+// Prompt guidance for any "content" the model writes. Always Markdown, all math
+// in LaTeX; tables and charts per the media policy (images are covered
+// separately by imageMenuPrompt).
+export function markdownGuidelines(policy) {
+  const asked = (id) => policy.requested.includes(id);
+  const on = (id) => policy.features.includes(id);
+
+  const tables = asked("tables")
+    ? `- The reader explicitly asked for a table — include one where it fits best (an explicit request always overrides their settings).`
+    : on("tables")
+    ? `- A table when comparing items across the same attributes, or for structured data — e.g. a payoff matrix in game theory, a truth table, a comparison of properties or classifications, a timeline of dates.
+- When a concept is much easier to grasp through a small concrete worked example, include one — as a table where it has a grid shape (e.g. the payoffs of a 2×2 game when explaining an equilibrium) — rather than only naming the example.`
+    : `- Do NOT use tables — the reader turned them off.`;
+
+  const chartHow = `Write it as a Mermaid code block ("\`\`\`mermaid" … "\`\`\`"): flowchart, timeline or mindmap for a process, cycle, sequence of stages or hierarchy; xychart-beta (bar/line) or pie for a numeric comparison, using only figures stated in the source material or firmly established. At most ~12 nodes or data points, short labels. Never diagram or chart anything you'd have to guess at.`;
+  const charts = asked("charts")
+    ? `- The reader explicitly asked for a diagram or chart — include one (an explicit request always overrides their settings). ${chartHow}`
+    : on("charts")
+    ? `- A diagram or chart ONLY when it is much clearer as a picture than as prose. At most ONE in the whole article — most articles need none. ${chartHow}`
+    : `- Do NOT include diagrams or charts — the reader turned them off.`;
+
+  const images = on("images") ? "" : `- Do NOT include images — the reader turned them off.\n`;
+
+  return `FORMATTING — each section's "content" is ALWAYS GitHub-flavored Markdown:
+- Paragraphs separated by a blank line ("\\n\\n"). Use Markdown wherever it makes the text clearer: bulleted or numbered lists for steps, procedures, sequences or three or more parallel items, and **bold** for a key term where it's first defined.
+- ALL mathematics in LaTeX — every formula, equation, variable, symbol and operator: inline as $...$, and important equations on their own line as $$...$$. Never write math as plain text or Unicode symbols (write $\\hat{H} = \\hat{T} + \\hat{V}$, not "Ĥ = T̂ + V̂").
+${tables}
+${charts}
+${images}- Never use headings (#), links, image URLs or HTML inside content — each section already has its own heading.
+- This is JSON: escape every LaTeX backslash as \\\\ (write "\\\\frac", "\\\\theta", "\\\\nabla") and newlines as \\n.`;
+}
+
+// Images are only ever shown from Wikimedia's own hosts (full files and thumbnails).
+export function isWikimediaUrl(url) {
+  return typeof url === "string" && /^https:\/\/(upload|thumb)\.wikimedia\.org\//.test(url);
+}
+
+// The numbered image menu for a prompt, or "" when there are no images.
+// images: the article's image list (see lib/wikiImages.js); ids are 1-based positions.
+export function imageMenuPrompt(images, alreadyUsed, policy) {
+  if (policy.maxImages === 0 || !images.some(Boolean)) return "";
+  // Invalid entries are null placeholders that keep the numbering stable
+  const menu = images
+    .map((img, i) => (img ? `[${i + 1}] ${img.caption}` : null))
+    .filter(Boolean)
+    .join("\n");
+  const remaining = Math.max(policy.maxImages - alreadyUsed, 0);
+  const when = policy.requested.includes("images")
+    ? `- The reader explicitly asked for an image — include the most relevant one from this list (an explicit request always overrides their settings). If none of them fits, don't force one.`
+    : `- Add an image only where it genuinely helps understanding: a diagram of the structure or process being explained, or a picture of the subject itself. Never add one as decoration.
+- Most articles need at most ONE image — the single most useful one. Add a second only if it shows something clearly different that the text relies on.`;
+  return `IMAGES — real images from the source Wikipedia articles, the ONLY images you may use:
+${menu}
+${when}
+- Hard limit: one per section and ${remaining} more in the whole article; never reuse one.
+- To add one, put ![short caption in your own words](image:N) on its own line in that section's content, right after the paragraph it illustrates.`;
+}
+
+// Valid JSON escapes that a missed LaTeX backslash turns into control
+// characters: "\theta" → tab + "heta", "\frac" → form feed + "rac", etc.
+// Only repaired inside math, and for \n only before common commands, since a
+// real newline can legitimately precede a letter.
+// Inline spans may contain single newlines (a broken "\nabla" is one) but not blank lines
+const MATH_SPAN = /\$\$[\s\S]*?\$\$|\$(?:[^$\n]|\n(?!\n))*?\$/g;
+const BROKEN_NEWLINE =
+  /\n(?=(?:abla|eq|e|u|ot|i|leq|geq|mid|parallel|subset|subseteq|exists|ewline|atural|ormalsize)(?![a-zA-Z]))/g;
+
+export function repairLatexEscapes(markdown) {
+  if (typeof markdown !== "string" || !markdown.includes("$")) return markdown;
+  return markdown.replace(MATH_SPAN, (span) =>
+    span
+      .replace(/\t/g, "\\t")
+      .replace(/\f/g, "\\f")
+      .replace(/\r/g, "\\r")
+      .replace(/\x08/g, "\\b")
+      .replace(BROKEN_NEWLINE, "\\n")
+  );
+}
+
+const IMAGE_REF = /!\[([^\]\n]*)\]\(image:(\d+)\)/g;
+const DIAGRAM_BLOCK = /```mermaid[\s\S]*?```/g;
+
+export function countImageRefs(sections) {
+  return sections.reduce((n, s) => n + ((typeof s.content === "string" && s.content.match(IMAGE_REF)) || []).length, 0);
+}
+
+export function countDiagrams(sections) {
+  return sections.reduce((n, s) => n + ((typeof s.content === "string" && s.content.match(DIAGRAM_BLOCK)) || []).length, 0);
+}
+
+// Drops image references that aren't on the menu, repeat an image, or exceed
+// the per-section / per-article caps, and diagrams past the cap — including
+// everything of a kind the policy doesn't allow. Earlier sections win, so
+// existing media stays put when a later section adds more.
+export function enforceMediaLimits(sections, images, policy) {
+  const used = new Set();
+  let imageCount = 0;
+  let diagramCount = 0;
+
+  return sections.map((section) => {
+    if (typeof section.content !== "string") return section;
+    let inSection = 0;
+
+    const content = section.content
+      .replace(IMAGE_REF, (ref, _alt, n) => {
+        const id = Number(n);
+        const allowed =
+          images[id - 1] &&
+          !used.has(id) &&
+          inSection < MAX_IMAGES_PER_SECTION &&
+          imageCount < policy.maxImages;
+        if (!allowed) return "";
+        used.add(id);
+        inSection += 1;
+        imageCount += 1;
+        return ref;
+      })
+      .replace(DIAGRAM_BLOCK, (block) => (diagramCount++ < policy.maxDiagrams ? block : ""))
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+    return content === section.content ? section : { ...section, content };
+  });
+}
+
+// While content is still streaming in, hide whatever hasn't finished yet so it
+// doesn't flash as broken output: an unclosed diagram block, a half-written
+// image reference, or a formula whose closing $ hasn't arrived.
+export function trimIncompleteMarkdown(markdown) {
+  let out = markdown;
+
+  const fences = (out.match(/```/g) ?? []).length;
+  if (fences % 2 === 1) out = out.slice(0, out.lastIndexOf("```"));
+
+  out = out.replace(/!\[[^\]\n]*(\]\([^)\n]*)?$/, "");
+
+  const displayCount = (out.match(/\$\$/g) ?? []).length;
+  if (displayCount % 2 === 1) return out.slice(0, out.lastIndexOf("$$"));
+
+  const lastBlock = out.slice(out.lastIndexOf("\n") + 1).replace(/\$\$/g, "");
+  const inlineCount = (lastBlock.match(/(?<!\\)\$/g) ?? []).length;
+  if (inlineCount % 2 === 1) return out.slice(0, out.lastIndexOf("$"));
+
+  return out;
+}

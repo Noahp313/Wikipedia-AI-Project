@@ -3,6 +3,7 @@
 /* Semantic design tokens. Components use these (bg-surface, text-ink-muted,
    border-line, …) instead of raw grays so light/dark stay in sync. */
 :root {
+  color-scheme: light;
   --canvas: #fafafa;
   --surface: #ffffff;
   --subtle: #f4f4f5;
@@ -21,11 +22,17 @@
   --warning: #d97706;
   --edited: #7c3aed;
   --edited-soft: #f5f3ff;
+  --ask: #d97706;
+  --ask-soft: #fffbeb;
+  --ask-mark: rgb(250 204 21 / 0.4);
   --shadow-color: 24 24 27;
 }
 
+/* Dark palette: follows the OS unless Settings forced a theme via data-theme
+   (set before paint by themeInitScript). Keep the two copies identical. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --canvas: #0c0c0e;
     --surface: #151518;
     --subtle: #1d1d21;
@@ -44,8 +51,37 @@
     --warning: #f59e0b;
     --edited: #a78bfa;
     --edited-soft: rgb(167 139 250 / 0.12);
+    --ask: #fbbf24;
+    --ask-soft: rgb(245 158 11 / 0.1);
+    --ask-mark: rgb(250 204 21 / 0.25);
     --shadow-color: 0 0 0;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #0c0c0e;
+  --surface: #151518;
+  --subtle: #1d1d21;
+  --line: #27272a;
+  --line-strong: #3f3f46;
+  --ink: #f4f4f5;
+  --ink-muted: #a1a1aa;
+  --ink-faint: #71717a;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: rgb(59 130 246 / 0.12);
+  --accent-ink: #93c5fd;
+  --danger: #f87171;
+  --danger-soft: rgb(248 113 113 / 0.1);
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --edited: #a78bfa;
+  --edited-soft: rgb(167 139 250 / 0.12);
+  --ask: #fbbf24;
+  --ask-soft: rgb(245 158 11 / 0.1);
+  --ask-mark: rgb(250 204 21 / 0.25);
+  --shadow-color: 0 0 0;
 }
 
 @theme inline {
@@ -67,6 +103,9 @@
   --color-warning: var(--warning);
   --color-edited: var(--edited);
   --color-edited-soft: var(--edited-soft);
+  --color-ask: var(--ask);
+  --color-ask-soft: var(--ask-soft);
+  --color-ask-mark: var(--ask-mark);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -81,6 +120,9 @@ body {
   background: var(--accent-soft);
   color: var(--accent-ink);
 }
+
+/* The ::highlight(ask-context) rule (marker color for chat-attached excerpts)
+   is inlined in app/layout.js — Next's CSS parser doesn't support ::highlight(). */
 
 @layer components {
   .btn {
@@ -118,6 +160,168 @@ body {
 
   .label {
     @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint;
+  }
+}
+
+/* Rendered section content (MarkdownContent). Plain prose stays the default
+   look; lists, tables and math get just enough structure to read well. */
+.md > * + * {
+  margin-top: 0.9em;
+}
+.md strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.md ul,
+.md ol {
+  padding-left: 1.4em;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li + li {
+  margin-top: 0.3em;
+}
+.md li::marker {
+  color: var(--ink-faint);
+}
+.md code {
+  border-radius: 0.3rem;
+  background: var(--subtle);
+  padding: 0.1em 0.35em;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.88em;
+  color: var(--ink);
+}
+.md pre {
+  overflow-x: auto;
+  border-radius: 0.6rem;
+  background: var(--subtle);
+  padding: 0.8em 1em;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+}
+.md blockquote {
+  border-left: 3px solid var(--line-strong);
+  padding-left: 1em;
+  color: var(--ink-muted);
+}
+.md .md-subheading {
+  font-weight: 600;
+  color: var(--ink);
+}
+.md .md-table {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+}
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+.md th {
+  background: var(--subtle);
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+}
+.md th,
+.md td {
+  padding: 0.5em 0.8em;
+  vertical-align: top;
+}
+.md tr + tr td,
+.md thead + tbody tr:first-child td {
+  border-top: 1px solid var(--line);
+}
+.md .katex {
+  font-size: 1.05em;
+  color: var(--ink);
+}
+.md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.2em 0;
+}
+/* Images (from the article's Wikipedia menu) and diagrams. Kept modest in
+   size so a figure supports the text rather than taking over the page. */
+.md .md-figure {
+  display: block;
+  margin: 1.2em 0;
+}
+.md .md-figure img {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  object-fit: contain;
+  /* Many Wikipedia diagrams are transparent with black lines — keep them
+     legible in dark mode */
+  background: #fff;
+  border-radius: 0.6rem;
+  padding: 0.5rem;
+  border: 1px solid var(--line);
+}
+.md .md-diagram {
+  display: block;
+  overflow-x: auto;
+  text-align: center;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  padding: 0.75rem;
+}
+.md .md-diagram svg {
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.md .md-caption {
+  display: block;
+  margin-top: 0.5em;
+  text-align: center;
+  font-size: 0.88em;
+  line-height: 1.5;
+  color: var(--ink-muted);
+}
+.md .md-credit {
+  display: block;
+  margin-top: 0.2em;
+  text-align: center;
+  font-size: 0.75em;
+  line-height: 1.4;
+  color: var(--ink-faint);
+}
+.md .md-credit a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md .md-credit a:hover {
+  color: var(--ink-muted);
+}
+
+/* Caret after the last block while a section is being written */
+.md-streaming > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: caret-blink 1s steps(2, start) infinite;
+}
+@keyframes caret-blink {
+  to {
+    visibility: hidden;
   }
 }
 

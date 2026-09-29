@@ -44,6 +44,13 @@ function generatedKey(userId) {
 }
 const GENERATED_LIST_MAX = 50;
 
+// Recently opened articles (sorted set: articleId → last opened, ms). Anonymous
+// users' lists expire with their articles; signed-in users' are just trimmed.
+function recentKey(userId) {
+    return `user-recent:${userId}`;
+}
+const RECENT_MAX = 20;
+
 // Saved articles have no TTL; unsaved ones expire CACHE_TTL_SECONDS after their
 // last change. Writes use keepTtl + `expire ... XX` (only refresh an existing
 // TTL) so an edit never re-adds an expiry to a saved article.
@@ -100,12 +107,14 @@ export async function updateCachedUserArticle(articleId, patch) {
     }
 }
 
-export async function recordArticleSession(articleId, session, article) {
+// steps: labels of the edits made in this session so far ("Manual edit", the
+// chat message that caused an edit, …), for the My articles history view.
+export async function recordArticleSession(articleId, session, article, steps = []) {
     try {
         await redis
             .pipeline()
             .hset(historyKey(articleId), {
-                [session.id]: { startedAt: session.startedAt, endedAt: Date.now(), article },
+                [session.id]: { startedAt: session.startedAt, endedAt: Date.now(), article, steps },
             })
             .expire(historyKey(articleId), CACHE_TTL_SECONDS, "XX")
             .exec();
@@ -217,8 +226,87 @@ export async function transferUserArticles(fromUserId, toUserId) {
                 .expire(generatedKey(toUserId), CACHE_TTL_SECONDS);
         }
         pipeline.del(generatedKey(fromUserId));
+
+        const recent = await redis.zrange(recentKey(fromUserId), 0, -1, { withScores: true });
+        const movedSet = new Set(moved);
+        const recentMembers = [];
+        for (let i = 0; i < recent.length; i += 2) {
+            if (movedSet.has(recent[i])) recentMembers.push({ score: Number(recent[i + 1]), member: recent[i] });
+        }
+        if (recentMembers.length) {
+            pipeline
+                .zadd(recentKey(toUserId), ...recentMembers)
+                .zremrangebyrank(recentKey(toUserId), 0, -(RECENT_MAX + 1));
+        }
+        pipeline.del(recentKey(fromUserId));
+
         await pipeline.exec();
     } catch (err) {
         console.error(`Error transferring articles from ${fromUserId} to ${toUserId}:`, err);
     }
+}
+
+export async function recordArticleOpen(user, articleId) {
+    try {
+        const pipeline = redis
+            .pipeline()
+            .zadd(recentKey(user.id), { score: Date.now(), member: articleId })
+            .zremrangebyrank(recentKey(user.id), 0, -(RECENT_MAX + 1));
+        if (user.isAnonymous) pipeline.expire(recentKey(user.id), CACHE_TTL_SECONDS);
+        await pipeline.exec();
+    } catch (err) {
+        console.error(`Error recording open of ${articleId} for ${user.id}:`, err);
+    }
+}
+
+// [{ articleId, openedAt }] newest first.
+export async function getRecentArticleIds(userId, limit = RECENT_MAX) {
+    try {
+        const raw = await redis.zrange(recentKey(userId), 0, limit - 1, { rev: true, withScores: true });
+        const out = [];
+        for (let i = 0; i < raw.length; i += 2) out.push({ articleId: raw[i], openedAt: Number(raw[i + 1]) });
+        return out;
+    } catch (err) {
+        console.error(`Error fetching recent articles for ${userId}:`, err);
+        return [];
+    }
+}
+
+// Articles in id order (null where missing), plus each one's remaining TTL in
+// seconds (-1 = no expiry, i.e. saved).
+export async function getUserArticlesWithTtl(articleIds) {
+    if (!articleIds.length) return [];
+    try {
+        const pipeline = redis.pipeline();
+        articleIds.forEach((id) => pipeline.get(`user-article:${id}`).ttl(`user-article:${id}`));
+        const results = await pipeline.exec();
+        return articleIds.map((articleId, i) => ({
+            articleId,
+            article: results[i * 2] ?? null,
+            ttl: results[i * 2 + 1],
+        }));
+    } catch (err) {
+        console.error("Error fetching user articles:", err);
+        return articleIds.map((articleId) => ({ articleId, article: null, ttl: -2 }));
+    }
+}
+
+// Account deletion: every article the user owns (saved, generated or opened),
+// their edit histories, and the lists themselves.
+export async function deleteAllUserData(userId) {
+    const lists = [`user-articles:${userId}`, generatedKey(userId), recentKey(userId)];
+    const [saved, generated, recent] = await Promise.all([
+        redis.lrange(lists[0], 0, -1),
+        redis.lrange(lists[1], 0, -1),
+        redis.zrange(lists[2], 0, -1),
+    ]);
+    const ids = [...new Set([...saved, ...generated, ...recent])];
+    const articles = ids.length ? await redis.mget(...ids.map((id) => `user-article:${id}`)) : [];
+
+    const keys = [...lists];
+    ids.forEach((id, i) => {
+        // Only ever delete what this user owns
+        if (articles[i]?.userId === userId) keys.push(`user-article:${id}`, historyKey(id));
+    });
+    await redis.del(...keys);
 }

@@ -1,7 +1,21 @@
 import { getCachedArticle } from "../../../lib/cache";
-import { callGemini } from "../../../lib/geminiClient";
+import { streamGemini } from "../../../lib/geminiClient";
+import { fixJsonEscapes, parsePartialJson } from "../../../lib/partialJson";
+import {
+  countDiagrams,
+  countImageRefs,
+  enforceMediaLimits,
+  imageMenuPrompt,
+  isWikimediaUrl,
+  markdownGuidelines,
+  mediaPolicy,
+  repairLatexEscapes,
+} from "../../../lib/markdown";
+import { normalizeFeatures, requestedFeatures } from "../../../lib/features";
+import { ndjsonResponse } from "../../../lib/ndjsonResponse";
 import { getSessionUser } from "../../../lib/session";
 import { userChatRateLimit } from "../../../lib/rateLimit";
+import { levelInstructions, normalizeLevel } from "../../../lib/explanationLevels";
 
 const GEMINI_MODEL = "gemini-3.5-flash";
 const VALID_SOURCE_STATUSES = ["source", "hybrid", "generated"];
@@ -25,7 +39,56 @@ function historyBlock(history) {
     .join("\n");
 }
 
-function buildAnswerPrompt({ query, history, currentArticle, sourceText }) {
+// Parts of the article the reader attached to this message (highlighted text
+// or whole sections). Mirrors the client's MAX_CONTEXTS / MAX_EXCERPT_CHARS.
+const MAX_CONTEXTS = 5;
+const MAX_EXCERPT_CHARS = 1000;
+
+function parseContexts(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (c) => c && typeof c.heading === "string" && c.heading.trim() && (c.text === null || typeof c.text === "string")
+    )
+    .slice(0, MAX_CONTEXTS)
+    .map((c) => ({ heading: c.heading.slice(0, 200), text: c.text ? c.text.slice(0, MAX_EXCERPT_CHARS + 1) : null }));
+}
+
+function contextBlock(contexts) {
+  if (contexts.length === 0) return "";
+  const lines = contexts.map((c, i) =>
+    c.text ? `${i + 1}. Excerpt from the "${c.heading}" section: "${c.text}"` : `${i + 1}. The entire "${c.heading}" section`
+  );
+  return `
+THE READER SELECTED THESE PARTS OF THE ARTICLE — their message is about them:
+${lines.join(`\n`)}
+- Read "this", "these", "it", "them", "here" as referring to the selected parts.
+- If several are selected and the reader asks to compare them (or how they relate or differ), compare
+  them directly: name the concrete similarities and differences rather than summarizing each one.
+- For questions about the selected parts, "answer" may be up to 3 short sentences (under 70 words) —
+  this overrides the one-sentence limit below.
+- If the reader asks for a change to the selection (e.g. "rewrite this more simply"), only amend the
+  section(s) the selection comes from.
+`;
+}
+
+// The article's image menu as sent by the client — only well-formed Wikimedia
+// entries are trusted (the renderer applies the same host check). Invalid
+// entries become null rather than being removed, so image numbers don't shift.
+const MAX_IMAGE_MENU = 12;
+function articleImages(article) {
+  if (!Array.isArray(article.images)) return [];
+  return article.images
+    .slice(0, MAX_IMAGE_MENU)
+    .map((img) =>
+      img && typeof img.caption === "string" && isWikimediaUrl(img.url)
+        ? img
+        : null
+    );
+}
+
+function buildAnswerPrompt({ query, history, currentArticle, sourceText, contexts = [], level, policy }) {
+  const images = articleImages(currentArticle);
   return `
 You are updating a Wikipedia-style article in response to a reader's follow-up question.
 You are given the CURRENT ARTICLE for context. Return a direct answer plus a list of EDITS —
@@ -33,7 +96,7 @@ usually none. Most questions should be answered WITHOUT changing the article.
 
 ${historyBlock(history) ? `CONVERSATION SO FAR:\n${historyBlock(history)}\n` : ""}
 Reader's question: "${query}"
-
+${contextBlock(contexts)}
 CURRENT ARTICLE:
 """
 ${JSON.stringify({ title: currentArticle.title, sections: currentArticle.sections }, null, 2)}
@@ -59,7 +122,7 @@ Guidelines:
   - If the message asks a question, answer it in ONE short sentence (two only if truly necessary), under 25 words.
   - If the message contains no question (e.g. it only asks for an edit), "answer" MUST be "" (empty string).
   - Never describe or mention your edits in "answer" — the app reports changes to the reader separately.
-  - Plain everyday language, no jargon unless the reader used it first. No greetings, hedging, caveats, or restating the question.
+  - Pitch the wording to the EXPLANATION LEVEL below. No greetings, hedging, caveats, or restating the question.
 - WHEN TO EDIT — be strict. The default is an empty "edits" array. Only edit if at least one is true:
   1. The reader explicitly asks for a change (add, expand, rewrite, remove, fix, etc.).
   2. The article states something factually wrong, or contradicts the source material.
@@ -83,6 +146,15 @@ Guidelines:
   by the source material, use "amend" to fix or remove it rather than leaving it and adding a separate
   correcting section.
 - If nothing meets the WHEN TO EDIT bar, return an empty "edits" array and just answer.
+
+${levelInstructions(level)}
+
+${markdownGuidelines(policy)}
+- The formatting rules apply to the "content" of edits. "answer" is short Markdown text; any math in it is LaTeX ($...$).
+- The level applies to "answer" and to the content of any new or amended section. A reader asking to
+  change the level of existing text ("explain this more simply") is an explicit request for an amend.
+
+${imageMenuPrompt(images, countImageRefs(currentArticle.sections), policy)}
 `;
 }
 
@@ -92,9 +164,9 @@ function extractJson(text) {
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON found in Gemini response");
   try {
-    return JSON.parse(cleaned.slice(start, end + 1));
+    return JSON.parse(fixJsonEscapes(cleaned.slice(start, end + 1)));
   } catch {
-    return JSON.parse(cleaned);
+    return JSON.parse(fixJsonEscapes(cleaned));
   }
 }
 
@@ -173,6 +245,8 @@ export async function POST(req) {
   }
 
   const { query, history, relevantSections, chatContextStatus, currentArticle } = body;
+  const contexts = parseContexts(body.contexts);
+  const level = normalizeLevel(body.level);
 
   if (!query || typeof query !== "string" || !query.trim()) {
     return Response.json({ error: "Missing query" }, { status: 400 });
@@ -210,12 +284,54 @@ export async function POST(req) {
     // fallback branch below naturally treats this as ungrounded
   }
 
-  const prompt = buildAnswerPrompt({ query: query.trim(), history, currentArticle, sourceText });
+  // The article's feature selection plus anything this message directly asks
+  // for. Never below what the article already has, so an edit can't strip
+  // media added earlier (e.g. by a direct request).
+  const basePolicy = mediaPolicy(normalizeFeatures(currentArticle.features), requestedFeatures(query));
+  const policy = {
+    ...basePolicy,
+    maxImages: Math.max(basePolicy.maxImages, countImageRefs(currentArticle.sections)),
+    maxDiagrams: Math.max(basePolicy.maxDiagrams, countDiagrams(currentArticle.sections)),
+  };
 
-  try {
-    const data = await callGemini({ source: "chatbot-answer", prompt, model: GEMINI_MODEL });
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error("No text returned from Gemini API");
+  const prompt = buildAnswerPrompt({ query: query.trim(), history, currentArticle, sourceText, contexts, level, policy });
+
+  // With parts of the article selected, amends stay inside the selected
+  // sections — "rewrite this" must not touch anything else. New sections are
+  // still allowed.
+  const selectedHeadings = new Set(contexts.map((c) => c.heading));
+  const inScope = (edit) => selectedHeadings.size === 0 || edit.op === "add" || selectedHeadings.has(edit.heading);
+  const existingHeadings = new Set(currentArticle.sections.map((s) => s.heading));
+
+  // A partial edit is shown live only once it's clearly one the final checks
+  // will keep (complete op, a real heading for amends, in scope) — otherwise
+  // a section could visibly rewrite and then snap back.
+  const isStreamable = (edit) =>
+    edit &&
+    (edit.op === "amend" || edit.op === "add") &&
+    typeof edit.heading === "string" &&
+    edit.heading.trim().length > 0 &&
+    typeof edit.content === "string" &&
+    (edit.op === "add" || existingHeadings.has(edit.heading)) &&
+    inScope(edit);
+
+  // Events: { t: "edit", i, op, heading, content } while edits are being
+  // written, then { t: "done", ... } with the same payload the non-streaming
+  // version returned. The answer itself arrives only with "done".
+  return ndjsonResponse(async (send) => {
+    let text = "";
+    const sentContent = [];
+
+    for await (const chunk of streamGemini({ source: "chatbot-answer", prompt, model: GEMINI_MODEL, json: true })) {
+      text += chunk;
+      const edits = parsePartialJson(text)?.edits;
+      if (!Array.isArray(edits)) continue;
+      edits.forEach((edit, i) => {
+        if (!isStreamable(edit) || sentContent[i] === edit.content) return;
+        sentContent[i] = edit.content;
+        send({ t: "edit", i, op: edit.op, heading: edit.heading, content: repairLatexEscapes(edit.content) });
+      });
+    }
 
     const parsed = extractJson(text);
 
@@ -225,33 +341,51 @@ export async function POST(req) {
       throw new Error("AI response is missing an answer");
     }
 
-    const rawEdits = Array.isArray(parsed.edits) ? parsed.edits : [];
-    const validEdits = rawEdits.filter(isValidEdit);
+    // A missing/unknown sourceStatus is labelled "generated" (the most cautious
+    // provenance) rather than dropping an edit the reader already saw stream in.
+    const rawEdits = (Array.isArray(parsed.edits) ? parsed.edits : []).map((e) => {
+      if (!e || typeof e !== "object") return e;
+      const edit = typeof e.content === "string" ? { ...e, content: repairLatexEscapes(e.content) } : e;
+      return VALID_SOURCE_STATUSES.includes(edit.sourceStatus) ? edit : { ...edit, sourceStatus: "generated" };
+    });
+    const wellFormedEdits = rawEdits.filter(isValidEdit);
 
-    if (validEdits.length < rawEdits.length) {
+    if (wellFormedEdits.length < rawEdits.length) {
       console.warn(
-        `[chatbot-answer] dropped ${rawEdits.length - validEdits.length} malformed edit(s):`,
+        `[chatbot-answer] dropped ${rawEdits.length - wellFormedEdits.length} malformed edit(s):`,
         rawEdits.filter((e) => !isValidEdit(e))
       );
     }
 
-    const { article: updatedArticle, changedHeadings, addedHeadings, amendedHeadings } =
+    const validEdits = wellFormedEdits.filter(inScope);
+
+    if (validEdits.length < wellFormedEdits.length) {
+      console.warn(
+        `[chatbot-answer] dropped ${wellFormedEdits.length - validEdits.length} edit(s) outside the selected sections:`,
+        wellFormedEdits.filter((e) => !inScope(e)).map((e) => e.heading)
+      );
+    }
+
+    const { article: mergedArticle, changedHeadings, addedHeadings, amendedHeadings } =
       validEdits.length > 0
         ? applyEdits(currentArticle, validEdits)
         : { article: currentArticle, changedHeadings: [], addedHeadings: [], amendedHeadings: [] };
+    // Same media caps as a new article (menu-only images, one diagram)
+    const updatedArticle =
+      validEdits.length > 0
+        ? { ...mergedArticle, sections: enforceMediaLimits(mergedArticle.sections, articleImages(currentArticle), policy) }
+        : mergedArticle;
 
     const answer =
       [parsed.answer.trim(), buildChangeNote(addedHeadings, amendedHeadings)].filter(Boolean).join(" ") ||
       "Nothing in the article needed to change.";
 
-    return Response.json({
+    send({
+      t: "done",
       answer,
       article: updatedArticle,
       articleChanged: validEdits.length > 0,
       changedHeadings,
     });
-  } catch (err) {
-    console.error("[chatbot-answer] error:", err);
-    return Response.json({ error: err.message }, { status: 500 });
-  }
+  });
 }

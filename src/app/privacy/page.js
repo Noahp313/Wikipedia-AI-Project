@@ -26,7 +26,9 @@ export default function PrivacyPage() {
         </p>
         <p>
           <strong className="text-ink">Without signing in.</strong> We create an anonymous session (a cookie) so your
-          generated articles belong to you. If you sign in later, those articles move to your account.
+          generated articles belong to you. It lasts until you close your browser: when you come back after that, the
+          old session is ended and its articles can no longer be opened. If you sign in before then, those
+          articles move to your account.
         </p>
         <p>
           <strong className="text-ink">AI processing.</strong> Your searches, questions and article text are sent to
@@ -37,7 +39,8 @@ export default function PrivacyPage() {
           advertising.
         </p>
         <p>
-          <strong className="text-ink">Questions or deletion.</strong> To have your account and data deleted, contact
+          <strong className="text-ink">Deleting your data.</strong> You can delete your account from Settings. This
+          permanently removes your account, your articles and their edit history. For any other questions, contact
           the site owner.
         </p>
       </div>

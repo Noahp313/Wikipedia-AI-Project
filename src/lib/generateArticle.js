@@ -1,8 +1,15 @@
 import { fetchWikipediaContent } from "../lib/wikipedia";
 import { parseSections, buildSourceText } from "../lib/wikiSections";
 import { callGemini } from "../lib/geminiClient"
+import { fixJsonEscapes } from "../lib/partialJson";
+import { fetchArticleImages } from "../lib/wikiImages";
 
 const GEMINI_MODEL = "gemini-3.1-flash-lite";
+
+// These summaries are the source material for user articles, so keep math in
+// the same LaTeX form the articles use (see lib/markdown.js).
+const LATEX_RULE =
+    'Write all mathematics in LaTeX ($...$ inline, $$...$$ for key equations), never as plain text or Unicode symbols; this is JSON, so escape each LaTeX backslash as \\\\ (e.g. "\\\\hat{H}")';
 
 export async function generateArticleForTopic(topic) {
     let sourceText = null;
@@ -10,6 +17,9 @@ export async function generateArticleForTopic(topic) {
     let sourceUrl = null;
 
     const wiki = await fetchWikipediaContent(topic);
+    // Fetched alongside the summary (cached with it) so articles built from
+    // this topic can show its real images
+    const imagesPromise = wiki.found ? fetchArticleImages(wiki.title) : Promise.resolve([]);
 
     if (wiki.found) {
         const sections = parseSections(wiki.extract);
@@ -49,6 +59,7 @@ export async function generateArticleForTopic(topic) {
     - Section titles should be natural (e.g. "History", "Applications", "Causes", "Design", etc.)
     - Adapt sections to the topic (do NOT use fixed headings)
     - Write concise but informative paragraphs
+    - ${LATEX_RULE}
     - Make the first sentence of every section a topic sentence
     - Mark each section's "sourceStatus": "wikipedia" if drawn entirely from the source material, "generated" if it had no coverage in the source and you wrote it from general knowledge, "hybrid" if it mixes both
     - If the source material for a section is marked [TRUNCATED] or is only a partial summary, treat it as a starting point and complete the section using general knowledge, marking that section "hybrid"
@@ -77,6 +88,7 @@ export async function generateArticleForTopic(topic) {
     - Section titles should be natural (e.g. "History", "Applications", "Causes", "Design", etc.)
     - Adapt sections to the topic (do NOT use fixed headings)
     - Write concise but informative paragraphs
+    - ${LATEX_RULE}
     - Every section's "sourceStatus" should be "generated" since no source material was available
     `;
     
@@ -102,10 +114,10 @@ export async function generateArticleForTopic(topic) {
 
     let parsed;
     try {
-        parsed = JSON.parse(jsonString);
+        parsed = JSON.parse(fixJsonEscapes(jsonString));
     } catch {
         try {
-        parsed = JSON.parse(cleaned);
+        parsed = JSON.parse(fixJsonEscapes(cleaned));
         } catch (err) {
         console.error("Unable to parse Gemini JSON response:", cleaned);
         throw new Error("Invalid JSON returned from Gemini API");
@@ -121,5 +133,6 @@ export async function generateArticleForTopic(topic) {
         ...parsed,
         sourceStatus,
         sourceUrl,
+        images: await imagesPromise,
     };
 }

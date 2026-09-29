@@ -3,7 +3,7 @@ import { anonymous } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 import { Pool } from "pg";
 import { Redis } from "@upstash/redis";
-import { transferUserArticles } from "./cache";
+import { deleteAllUserData, transferUserArticles } from "./cache";
 
 // Better Auth stores JSON strings and parses them itself, so this client must
 // not auto-deserialize (unlike the shared one in redis.ts).
@@ -46,6 +46,16 @@ export const auth = betterAuth({
     session: {
         // Signed session copy in a cookie, so most requests skip storage entirely.
         cookieCache: { enabled: true, maxAge: 5 * 60 },
+    },
+    user: {
+        // Settings → Delete account. Google-only users have no password, so
+        // Better Auth requires a session under a day old (freshAge) instead.
+        deleteUser: {
+            enabled: true,
+            beforeDelete: async (user) => {
+                await deleteAllUserData(user.id);
+            },
+        },
     },
     rateLimit: {
         storage: "secondary-storage",
