@@ -1,26 +1,131 @@
 @import "tailwindcss";
 
+/* Semantic design tokens. Components use these (bg-surface, text-ink-muted,
+   border-line, …) instead of raw grays so light/dark stay in sync. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: #fafafa;
+  --surface: #ffffff;
+  --subtle: #f4f4f5;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --ink: #18181b;
+  --ink-muted: #52525b;
+  --ink-faint: #a1a1aa;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: #eff6ff;
+  --accent-ink: #1e40af;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --success: #16a34a;
+  --warning: #d97706;
+  --edited: #7c3aed;
+  --edited-soft: #f5f3ff;
+  --shadow-color: 24 24 27;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #0c0c0e;
+    --surface: #151518;
+    --subtle: #1d1d21;
+    --line: #27272a;
+    --line-strong: #3f3f46;
+    --ink: #f4f4f5;
+    --ink-muted: #a1a1aa;
+    --ink-faint: #71717a;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --accent-soft: rgb(59 130 246 / 0.12);
+    --accent-ink: #93c5fd;
+    --danger: #f87171;
+    --danger-soft: rgb(248 113 113 / 0.1);
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --edited: #a78bfa;
+    --edited-soft: rgb(167 139 250 / 0.12);
+    --shadow-color: 0 0 0;
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-edited: var(--edited);
+  --color-edited-soft: var(--edited-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors cursor-pointer
+      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40
+      disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply bg-accent text-white shadow-sm hover:bg-accent-hover disabled:hover:bg-accent;
+  }
+
+  .btn-secondary {
+    @apply border border-line bg-surface text-ink-muted shadow-[0_1px_2px_rgb(var(--shadow-color)/0.04)]
+      hover:bg-subtle hover:text-ink disabled:hover:bg-surface disabled:hover:text-ink-muted;
+  }
+
+  .btn-ghost {
+    @apply text-ink-muted hover:bg-subtle hover:text-ink disabled:hover:bg-transparent disabled:hover:text-ink-muted;
+  }
+
+  .btn-icon {
+    @apply px-1.5 py-1.5;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 py-2 text-ink placeholder:text-ink-faint transition-shadow
+      focus:outline-none focus:border-accent/60 focus:ring-4 focus:ring-accent/10
+      disabled:cursor-not-allowed disabled:bg-subtle;
+  }
+
+  .card {
+    @apply rounded-xl border border-line bg-surface shadow-[0_1px_2px_rgb(var(--shadow-color)/0.04)];
+  }
+
+  .label {
+    @apply text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-faint;
+  }
+}
+
+@keyframes typing-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+.typing-dot {
+  animation: typing-dot 1.2s infinite ease-in-out;
 }

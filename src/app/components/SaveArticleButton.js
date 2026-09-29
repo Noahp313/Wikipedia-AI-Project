@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getUserId } from "../../lib/getUserId";
+import { BookmarkIcon, CheckIcon, XIcon } from "./icons";
 
 export default function SaveArticleButton({ articleId }) {
   const [saved, setSaved] = useState(false);
@@ -53,7 +54,7 @@ export default function SaveArticleButton({ articleId }) {
 
   if (loading) {
     return (
-      <div className="w-24 h-9 rounded-lg bg-gray-800 animate-pulse flex-shrink-0" />
+      <div className="w-[104px] h-[34px] rounded-lg bg-subtle animate-pulse flex-shrink-0" />
     );
   }
 
@@ -61,13 +62,24 @@ export default function SaveArticleButton({ articleId }) {
     <button
       onClick={handleToggle}
       disabled={working}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0 disabled:opacity-50 ${
-        saved
-          ? "bg-gray-700 text-gray-300 hover:bg-red-900 hover:text-red-200 cursor-pointer"
-          : "bg-blue-600 hover:bg-blue-500 text-white cursor-pointer"
+      title={saved ? "Remove from saved articles" : "Save this article"}
+      className={`group btn flex-shrink-0 ${
+        saved ? "btn-secondary hover:bg-danger-soft hover:text-danger hover:border-danger/30" : "btn-primary"
       }`}
     >
-      {saved ? "Saved ✓" : "Save Article"}
+      {saved ? (
+        <>
+          <CheckIcon size={15} className="group-hover:hidden" />
+          <XIcon size={15} className="hidden group-hover:block" />
+          <span className="group-hover:hidden">Saved</span>
+          <span className="hidden group-hover:inline">Unsave</span>
+        </>
+      ) : (
+        <>
+          <BookmarkIcon size={15} />
+          Save
+        </>
+      )}
     </button>
   );
 }

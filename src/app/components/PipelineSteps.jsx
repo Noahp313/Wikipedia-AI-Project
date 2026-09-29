@@ -1,3 +1,5 @@
+import { CheckIcon, SpinnerIcon, XIcon } from "./icons";
+
 // Order here drives both the progress list and the currentIndex lookup below.
 const STEPS = [
   { key: "detect-topics", label: "Detecting topics" },
@@ -10,44 +12,59 @@ export default function PipelineSteps({ currentStep, failedStep, devStatus }) {
   const currentIndex = STEPS.findIndex((s) => s.key === currentStep);
 
   return (
-    <div className="flex flex-col gap-2 p-4 rounded-lg bg-neutral-900 border border-neutral-800">
+    <ol className="card p-2">
       {STEPS.map((step, i) => {
         const isDone = i < currentIndex || (i === currentIndex && failedStep === null && currentStep === "done");
         const isActive = step.key === currentStep && currentStep !== "done";
         const isFailed = step.key === failedStep;
 
         return (
-          <div key={step.key} className="flex items-center gap-3 text-sm">
+          <li
+            key={step.key}
+            className={`flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg px-3 py-2 text-sm transition-colors ${
+              isActive && !isFailed ? "bg-subtle" : ""
+            }`}
+          >
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`flex h-5 w-5 items-center justify-center rounded-full ${
                 isFailed
-                  ? "bg-red-500"
+                  ? "bg-danger-soft text-danger"
                   : isDone
-                  ? "bg-green-500"
+                  ? "bg-success/15 text-success"
                   : isActive
-                  ? "bg-blue-500 animate-pulse"
-                  : "bg-neutral-700"
+                  ? "text-accent"
+                  : "border border-line-strong"
               }`}
-            />
+            >
+              {isFailed ? (
+                <XIcon size={12} strokeWidth={3} />
+              ) : isDone ? (
+                <CheckIcon size={12} strokeWidth={3} />
+              ) : isActive ? (
+                <SpinnerIcon size={16} />
+              ) : null}
+            </span>
             <span
               className={
                 isFailed
-                  ? "text-red-400"
+                  ? "text-danger font-medium"
                   : isDone
-                  ? "text-neutral-400"
+                  ? "text-ink-muted"
                   : isActive
-                  ? "text-neutral-100"
-                  : "text-neutral-600"
+                  ? "text-ink font-medium"
+                  : "text-ink-faint"
               }
             >
               {step.label}
             </span>
             {step.key === "detect-relevance" && isDone && devStatus === "no-relevant-sections" && (
-              <span className="text-xs text-yellow-500 ml-1">(no source found — using general knowledge)</span>
+              <span className="ml-auto rounded-md bg-warning/10 px-2 py-0.5 text-xs text-warning">
+                No source found — using general knowledge
+              </span>
             )}
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ol>
   );
 }

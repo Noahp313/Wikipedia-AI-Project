@@ -5,14 +5,29 @@ import { slugify } from "../../lib/slugify";
 import Link from "next/link";
 import SaveArticleButton from "./SaveArticleButton";
 import { updateArticleAction } from "../../lib/actions/updateArticle";
+import {
+  ArrowDownIcon,
+  ArrowLeftIcon,
+  ArrowUpIcon,
+  ChatIcon,
+  CheckIcon,
+  ExternalLinkIcon,
+  MenuIcon,
+  MinusIcon,
+  PencilIcon,
+  PlusIcon,
+  RedoIcon,
+  SendIcon,
+  TrashIcon,
+  UndoIcon,
+  XIcon,
+} from "./icons";
 
 function BackButton() {
   return (
-    <Link
-      href="/"
-      className="inline-flex items-center gap-2 px-3 py-1.5 mb-4 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-    >
-      ← Back to search
+    <Link href="/" className="btn btn-ghost -ml-2 mb-6 text-ink-muted">
+      <ArrowLeftIcon size={15} />
+      Back to search
     </Link>
   );
 }
@@ -21,13 +36,13 @@ function sourceStatusStyle(status) {
   switch (status) {
     case "source":
     case "wikipedia": // per-topic articles from generateArticle use this name
-      return { label: "From source material", color: "bg-green-500" };
+      return { label: "From source material", color: "bg-success" };
     case "hybrid":
-      return { label: "Source material + AI general knowledge", color: "bg-yellow-500" };
+      return { label: "Source material + AI general knowledge", color: "bg-warning" };
     case "generated":
-      return { label: "AI general knowledge only (no source)", color: "bg-red-500" };
+      return { label: "AI general knowledge only (no source)", color: "bg-danger" };
     default:
-      return { label: "Unknown origin", color: "bg-gray-500" };
+      return { label: "Unknown origin", color: "bg-ink-faint" };
   }
 }
 
@@ -40,11 +55,15 @@ function ProvenanceTags({ section }) {
   return (
     <>
       {hasGeneration && (
-        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${color}`} title={label} aria-label={label} />
+        <span
+          className={`w-2 h-2 rounded-full flex-shrink-0 ring-4 ring-canvas ${color}`}
+          title={label}
+          aria-label={label}
+        />
       )}
       {section.userEdited && (
         <span
-          className="flex-shrink-0 rounded border border-purple-500/40 bg-purple-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-purple-300"
+          className="flex-shrink-0 rounded-md bg-edited-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-edited"
           title="Edited by you"
         >
           User edited
@@ -54,22 +73,35 @@ function ProvenanceTags({ section }) {
   );
 }
 
-function TableOfContents({ sections }) {
+// Shared shell for the sidebar's stacked lists.
+function SidebarSection({ title, children }) {
+  return (
+    <div className="mt-8">
+      <h3 className="label mb-2.5">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+const SIDEBAR_LIST = "space-y-0.5 border-l border-line";
+const SIDEBAR_ITEM =
+  "-ml-px block w-full truncate border-l border-transparent py-1 pl-3 text-left text-[13px] leading-snug transition-colors";
+
+function TableOfContents({ sections, onNavigate }) {
   return (
     <nav>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        Contents
-      </h3>
-      <ul className="space-y-2 border-l border-gray-700 pl-3">
+      <h3 className="label mb-2.5">Contents</h3>
+      <ul className={SIDEBAR_LIST}>
         {sections.map((s, i) => {
           const slug = slugify(s.heading);
           return (
             <li key={`${i}-${slug}`}>
               <a
                 href={`#${slug}`}
-                className="text-sm text-gray-300 hover:text-blue-400 transition-colors block"
+                onClick={onNavigate}
+                className={`${SIDEBAR_ITEM} text-ink-muted hover:border-ink-faint hover:text-ink`}
               >
-                {s.heading || <span className="italic text-gray-500">Untitled section</span>}
+                {s.heading || <span className="italic text-ink-faint">Untitled section</span>}
               </a>
             </li>
           );
@@ -83,18 +115,15 @@ function UsedTopics({ topics }) {
   if (!topics || topics.length === 0) return null;
 
   return (
-    <div className="mt-8">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        Used Topics
-      </h3>
-      <ul className="space-y-2 border-l border-gray-700 pl-3">
+    <SidebarSection title="Used topics">
+      <div className="flex flex-wrap gap-1.5">
         {topics.map((topic) => (
-          <li key={topic} className="text-sm text-gray-300">
+          <span key={topic} className="rounded-md bg-subtle px-2 py-0.5 text-xs text-ink-muted">
             {topic}
-          </li>
+          </span>
         ))}
-      </ul>
-    </div>
+      </div>
+    </SidebarSection>
   );
 }
 
@@ -102,48 +131,48 @@ function Sources({ sources }) {
   if (!sources || sources.length === 0) return null;
 
   return (
-    <div className="mt-8">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        Sources
-      </h3>
-      <ul className="space-y-2 border-l border-gray-700 pl-3">
+    <SidebarSection title="Sources">
+      <ul className="space-y-1">
         {sources.map((s) => (
-          <li key={s.topic} className="text-sm">
+          <li key={s.topic}>
             <a
               href={s.sourceUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-gray-300 hover:text-blue-400 transition-colors underline decoration-gray-600 hover:decoration-blue-400 underline-offset-2"
+              className="group flex items-center gap-1.5 text-[13px] text-ink-muted hover:text-accent transition-colors"
             >
-              {s.title}
+              <span className="truncate">{s.title}</span>
+              <ExternalLinkIcon size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
             </a>
           </li>
         ))}
       </ul>
-    </div>
+    </SidebarSection>
   );
 }
 
 function UndoRedoControls({ canUndo, canRedo, onUndo, onRedo }) {
   return (
-    <div className="flex items-center gap-2 mb-4">
+    <div className="grid grid-cols-2 gap-2 mb-8">
       <button
         onClick={onUndo}
         disabled={!canUndo}
         title="Undo last change"
         aria-label="Undo last change"
-        className="flex-1 px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-800 disabled:hover:text-gray-300"
+        className="btn btn-secondary"
       >
-        ↶ Undo
+        <UndoIcon size={14} />
+        Undo
       </button>
       <button
         onClick={onRedo}
         disabled={!canRedo}
         title="Redo last undone change"
         aria-label="Redo last undone change"
-        className="flex-1 px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-800 disabled:hover:text-gray-300"
+        className="btn btn-secondary"
       >
-        Redo ↷
+        Redo
+        <RedoIcon size={14} />
       </button>
     </div>
   );
@@ -153,11 +182,8 @@ function EditHistory({ history, historyIndex, onJump }) {
   if (!history || history.length <= 1) return null;
 
   return (
-    <div className="mt-8">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        Edit History
-      </h3>
-      <ul className="space-y-2 border-l border-gray-700 pl-3">
+    <SidebarSection title="Edit history">
+      <ul className={SIDEBAR_LIST}>
         {history.map((entry, i) => {
           const isCurrent = i === historyIndex;
           return (
@@ -165,8 +191,12 @@ function EditHistory({ history, historyIndex, onJump }) {
               <button
                 onClick={() => onJump(i)}
                 title={entry.label}
-                className={`block w-full text-left text-sm truncate transition-colors ${
-                  isCurrent ? "text-blue-400 font-semibold" : "text-gray-400 hover:text-gray-200"
+                className={`${SIDEBAR_ITEM} cursor-pointer ${
+                  isCurrent
+                    ? "border-accent font-medium text-accent"
+                    : i > historyIndex
+                    ? "text-ink-faint hover:border-ink-faint hover:text-ink"
+                    : "text-ink-muted hover:border-ink-faint hover:text-ink"
                 }`}
               >
                 {entry.label}
@@ -175,7 +205,7 @@ function EditHistory({ history, historyIndex, onJump }) {
           );
         })}
       </ul>
-    </div>
+    </SidebarSection>
   );
 }
 
@@ -199,18 +229,15 @@ function PreviousSessions({ sessions, original, onRestore, disabled }) {
   ];
 
   return (
-    <div className="mt-8">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-        Previous Sessions
-      </h3>
-      <ul className="space-y-2 border-l border-gray-700 pl-3">
+    <SidebarSection title="Previous sessions">
+      <ul className={SIDEBAR_LIST}>
         {items.map((item) => (
           <li key={item.key}>
             <button
               onClick={() => onRestore(item.article, item.label ?? formatSessionTime(item.time))}
               disabled={disabled}
               title={disabled ? "Finish editing to restore a past version" : "Restore this version"}
-              className="block w-full text-left text-sm truncate text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+              className={`${SIDEBAR_ITEM} cursor-pointer text-ink-muted hover:border-ink-faint hover:text-ink disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-transparent disabled:hover:text-ink-muted`}
             >
               {/* Server and browser may format times in different time zones */}
               <span suppressHydrationWarning>{item.label ?? formatSessionTime(item.time)}</span>
@@ -218,27 +245,30 @@ function PreviousSessions({ sessions, original, onRestore, disabled }) {
           </li>
         ))}
       </ul>
-    </div>
+    </SidebarSection>
   );
 }
 
 function ArticleBody({ article, articleId, highlightedHeadings = [], onStartEdit, editDisabled = false }) {
   return (
-    <article className="max-w-3xl">
-      <div className="flex items-center justify-between gap-4 border-b border-gray-700 pb-4 mb-8">
-        <h1 className="text-4xl font-bold tracking-tight">{article.title}</h1>
-        <div className="flex items-center gap-2 flex-shrink-0">
+    <article className="min-w-0 flex-1 max-w-[46rem]">
+      <header className="flex flex-col gap-4 border-b border-line pb-6 mb-8 sm:flex-row sm:items-start sm:justify-between sm:gap-6 sm:mb-10">
+        <h1 className="min-w-0 break-words text-3xl leading-[1.15] font-semibold tracking-tight text-ink sm:text-[2.5rem] sm:leading-[1.1]">
+          {article.title}
+        </h1>
+        <div className="flex items-center gap-2 flex-shrink-0 sm:pt-1.5">
           <button
             onClick={onStartEdit}
             disabled={editDisabled}
             title={editDisabled ? "Wait for the chat to finish before editing" : "Edit this article"}
-            className="px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-gray-800 disabled:hover:text-gray-300"
+            className="btn btn-secondary"
           >
+            <PencilIcon size={14} />
             Edit
           </button>
           <SaveArticleButton articleId={articleId} />
         </div>
-      </div>
+      </header>
 
       {article.sections.map((s) => {
         const slug = slugify(s.heading);
@@ -248,20 +278,20 @@ function ArticleBody({ article, articleId, highlightedHeadings = [], onStartEdit
           <section
             id={slug}
             key={slug}
-            className={`mb-8 scroll-mt-10 rounded-md transition-colors duration-1000 ${
-              isChanged ? "bg-blue-500/10 ring-1 ring-blue-500/40 p-3 -m-3" : ""
+            className={`mb-10 scroll-mt-20 lg:scroll-mt-10 rounded-xl transition-colors duration-1000 ${
+              isChanged ? "bg-accent-soft ring-1 ring-accent/25 p-3 -mx-3 sm:p-5 sm:-mx-5" : ""
             }`}
           >
-            <div className="flex items-center gap-2 mb-3">
-              <h2 className={`text-2xl ${isChanged ? "font-bold text-blue-100" : "font-semibold"}`}>
-                {s.heading}
-                {isChanged && (
-                  <span className="ml-2 align-middle text-xs font-normal text-blue-400">Updated</span>
-                )}
-              </h2>
+            <div className="flex items-center gap-2.5 mb-3">
+              <h2 className="min-w-0 break-words text-xl font-semibold tracking-tight text-ink">{s.heading}</h2>
               <ProvenanceTags section={s} />
+              {isChanged && (
+                <span className="rounded-md bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-ink">
+                  Updated
+                </span>
+              )}
             </div>
-            <p className="text-gray-200 leading-relaxed whitespace-pre-line">{s.content}</p>
+            <p className="text-[15.5px] leading-[1.75] text-ink-muted whitespace-pre-line">{s.content}</p>
           </section>
         );
       })}
@@ -286,27 +316,25 @@ function AutoTextarea({ value, onChange, className = "", ...props }) {
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className={`w-full resize-none overflow-hidden rounded-md border border-gray-700 bg-gray-800 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${className}`}
+      className={`w-full resize-none overflow-hidden rounded-lg border border-transparent bg-transparent px-2.5 py-1.5 -mx-2.5 text-ink placeholder:text-ink-faint transition-colors hover:bg-subtle focus:bg-surface focus:border-accent/50 focus:outline-none focus:ring-4 focus:ring-accent/10 ${className}`}
       {...props}
     />
   );
 }
 
-const EDIT_ICON_BUTTON =
-  "px-2 py-1 rounded border border-gray-700 bg-gray-800 text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-gray-800";
-
-// Thin divider with an "Add section" button, shown between sections and at the end.
+// Thin divider with an "Add section" button, shown between sections.
 function AddSectionSlot({ onAdd }) {
   return (
-    <div className="group flex items-center gap-3 -mt-4 mb-4">
-      <div className="flex-1 border-t border-gray-800 group-hover:border-gray-600 transition-colors" />
+    <div className="group flex items-center gap-3 my-3">
+      <div className="flex-1 border-t border-transparent group-hover:border-line transition-colors" />
       <button
         onClick={onAdd}
-        className="px-2 py-0.5 rounded border border-gray-700 bg-gray-800 text-xs text-gray-400 hover:bg-gray-700 hover:text-white transition-colors"
+        className="btn btn-ghost px-2 py-0.5 text-xs text-ink-faint opacity-60 group-hover:opacity-100"
       >
-        + Add section
+        <PlusIcon size={12} />
+        Add section
       </button>
-      <div className="flex-1 border-t border-gray-800 group-hover:border-gray-600 transition-colors" />
+      <div className="flex-1 border-t border-transparent group-hover:border-line transition-colors" />
     </div>
   );
 }
@@ -342,76 +370,80 @@ function EditableArticleBody({ draft, error, onChange, onConfirm, onCancel }) {
   };
 
   return (
-    <article className="max-w-3xl w-full">
-      <div className="flex items-start justify-between gap-4 border-b border-gray-700 pb-4 mb-8">
-        <AutoTextarea
-          value={draft.title}
-          onChange={setTitle}
-          aria-label="Article title"
-          className="text-4xl font-bold tracking-tight"
-        />
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            onClick={onCancel}
-            className="px-3 py-1.5 rounded-md border border-gray-700 bg-gray-800 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-          >
+    <article className="min-w-0 flex-1 max-w-[46rem]">
+      <div className="sticky top-14 z-20 -mx-4 mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line bg-canvas/85 px-4 py-3 backdrop-blur sm:rounded-b-xl lg:top-0">
+        <span className="flex items-center gap-2 text-sm font-medium text-ink">
+          <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+          Editing article
+        </span>
+        <div className="flex items-center gap-2">
+          <button onClick={onCancel} className="btn btn-secondary">
             Cancel
           </button>
-          <button
-            onClick={onConfirm}
-            className="px-3 py-1.5 rounded-md bg-blue-600 hover:bg-blue-500 text-sm text-white transition-colors"
-          >
+          <button onClick={onConfirm} className="btn btn-primary">
+            <CheckIcon size={14} />
             Confirm edits
           </button>
         </div>
       </div>
 
-      {error && <p className="mb-6 text-sm text-red-400">{error}</p>}
+      <div className="border-b border-line pb-6 mb-8">
+        <AutoTextarea
+          value={draft.title}
+          onChange={setTitle}
+          aria-label="Article title"
+          className="text-3xl leading-[1.15] font-semibold tracking-tight sm:text-[2.5rem] sm:leading-[1.1]"
+        />
+      </div>
+
+      {error && (
+        <p className="mb-6 rounded-lg bg-danger-soft px-3.5 py-2.5 text-sm text-danger">{error}</p>
+      )}
 
       {draft.sections.length === 0 && (
-        <p className="mb-8 text-sm text-gray-500">All sections deleted. Add a new one, or cancel to restore them.</p>
+        <p className="mb-8 text-sm text-ink-faint">All sections deleted. Add a new one, or cancel to restore them.</p>
       )}
 
       {draft.sections.map((s, i) => {
         return (
           <div key={s._draftId}>
-            <section className="mb-8 rounded-md border border-dashed border-gray-700 p-3">
-              <div className="flex items-center gap-2 mb-3">
+            <section className="group/section card p-3 pl-5 sm:p-4 sm:pl-6 transition-shadow focus-within:shadow-md">
+              <div className="flex items-center gap-2 mb-1">
                 <AutoTextarea
                   value={s.heading}
                   onChange={(v) => updateSection(s._draftId, "heading", v)}
                   aria-label={`Section ${i + 1} heading`}
                   placeholder="Section heading"
                   autoFocus={s._isNew}
-                  className="text-2xl font-semibold"
+                  className="text-xl font-semibold tracking-tight"
                 />
                 <ProvenanceTags section={s} />
-                <div className="flex items-center gap-1 flex-shrink-0">
+                <div className="flex items-center gap-0.5 flex-shrink-0 opacity-50 group-hover/section:opacity-100 group-focus-within/section:opacity-100 transition-opacity">
                   <button
                     onClick={() => moveSection(i, -1)}
                     disabled={i === 0}
                     title="Move section up"
                     aria-label="Move section up"
-                    className={EDIT_ICON_BUTTON}
+                    className="btn btn-ghost btn-icon"
                   >
-                    ↑
+                    <ArrowUpIcon size={15} />
                   </button>
                   <button
                     onClick={() => moveSection(i, 1)}
                     disabled={i === draft.sections.length - 1}
                     title="Move section down"
                     aria-label="Move section down"
-                    className={EDIT_ICON_BUTTON}
+                    className="btn btn-ghost btn-icon"
                   >
-                    ↓
+                    <ArrowDownIcon size={15} />
                   </button>
                   <button
                     onClick={() => deleteSection(s._draftId)}
                     title="Delete section"
                     aria-label="Delete section"
-                    className={`${EDIT_ICON_BUTTON} hover:text-red-400`}
+                    className="btn btn-ghost btn-icon hover:bg-danger-soft hover:text-danger"
                   >
-                    Delete
+                    <TrashIcon size={15} />
                   </button>
                 </div>
               </div>
@@ -420,7 +452,7 @@ function EditableArticleBody({ draft, error, onChange, onConfirm, onCancel }) {
                 onChange={(v) => updateSection(s._draftId, "content", v)}
                 aria-label={`Section ${i + 1} content`}
                 placeholder="Section content"
-                className="text-gray-200 leading-relaxed"
+                className="text-[15.5px] leading-[1.75] text-ink-muted"
               />
             </section>
             {i < draft.sections.length - 1 && <AddSectionSlot onAdd={() => addSection(i + 1)} />}
@@ -430,9 +462,10 @@ function EditableArticleBody({ draft, error, onChange, onConfirm, onCancel }) {
 
       <button
         onClick={() => addSection(draft.sections.length)}
-        className="w-full py-3 rounded-md border border-dashed border-gray-700 text-sm text-gray-400 hover:border-gray-500 hover:bg-gray-800 hover:text-white transition-colors"
+        className="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-line-strong py-4 text-sm text-ink-muted hover:border-accent/50 hover:bg-accent-soft hover:text-accent-ink transition-colors cursor-pointer"
       >
-        + Add section
+        <PlusIcon size={14} />
+        Add section
       </button>
     </article>
   );
@@ -461,10 +494,10 @@ function ChatMessage({ role, content }) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm whitespace-pre-line ${
+        className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed whitespace-pre-line ${
           isUser
-            ? "bg-blue-600 text-white"
-            : "bg-gray-700 text-gray-100"
+            ? "rounded-br-md bg-accent text-white"
+            : "rounded-bl-md bg-subtle text-ink"
         }`}
       >
         {content}
@@ -478,6 +511,34 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onMinimize, onB
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const scrollRef = useRef(null);
+  // Whether the view should follow new messages. Cleared when the user scrolls
+  // up to reread something, so a reply arriving doesn't yank them back down.
+  const stickToBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el || el.clientHeight === 0) return; // ignore while hidden (minimized / closed drawer)
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, isLoading, error]);
+
+  // Hiding the panel (display: none) resets its scroll position, and resizes
+  // shift content — so re-pin to the newest message whenever the box resizes.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const detectRelevance = async ({ query, usedTopics, history, currentTopic }) => {
     const res = await fetch("/api/chatbot-detect-relevance", {
@@ -518,6 +579,8 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onMinimize, onB
     setError(null);
 
     const historyForCall = messages.map(({ role, content }) => ({ role, content }));
+    // Sending always jumps to the bottom, even if the user had scrolled up.
+    stickToBottomRef.current = true;
     setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
     setIsLoading(true);
     onBusyChange?.(true);
@@ -677,56 +740,76 @@ function ArticleChatPanel({ articleId, article, onArticleUpdate, onMinimize, onB
   };
 
   return (
-    <aside className="sticky top-10 self-start h-[calc(100vh-5rem)] w-full rounded-lg border border-gray-700 bg-gray-800 flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-200">Ask about this article</h3>
+    <aside className="card flex h-full w-full flex-col overflow-hidden rounded-none border-0 sm:rounded-xl sm:border xl:sticky xl:top-6 xl:h-[calc(100vh-3rem)]">
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-ink">
+          <ChatIcon size={15} className="text-accent" />
+          Ask about this article
+        </h3>
         <button
           onClick={onMinimize}
           aria-label="Minimize chat"
           title="Minimize"
-          className="text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-gray-700 leading-none"
+          className="btn btn-ghost btn-icon"
         >
-          −
+          <MinusIcon size={15} className="hidden xl:block" />
+          <XIcon size={16} className="xl:hidden" />
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {messages.length === 0 && (
-          <p className="text-sm text-gray-500">
-            Ask a question, or ask me to expand on something in this article.
-          </p>
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
+              <ChatIcon size={18} />
+            </span>
+            <p className="text-sm font-medium text-ink">Ask anything about this article</p>
+            <p className="mt-1 text-sm text-ink-faint">
+              Ask a question, or ask me to expand on something — edits appear in the article.
+            </p>
+          </div>
         )}
         {messages.map((m, i) => (
           <ChatMessage key={i} role={m.role} content={m.content} />
         ))}
         {isLoading && (
           <div className="flex justify-start">
-            <div className="bg-gray-700 rounded-lg px-3 py-2 text-sm text-gray-400">
-              Thinking…
+            <div className="flex items-center gap-1 rounded-2xl rounded-bl-md bg-subtle px-4 py-3" aria-label="Thinking">
+              {[0, 150, 300].map((delay) => (
+                <span
+                  key={delay}
+                  className="typing-dot h-1.5 w-1.5 rounded-full bg-ink-faint"
+                  style={{ animationDelay: `${delay}ms` }}
+                />
+              ))}
             </div>
           </div>
         )}
       </div>
 
       {error && (
-        <p className="px-4 py-1 text-xs text-red-400">{error}</p>
+        <p className="mx-3 mb-1 rounded-md bg-danger-soft px-3 py-1.5 text-xs text-danger">{error}</p>
       )}
 
-      <form onSubmit={handleSend} className="p-3 border-t border-gray-700 flex gap-2">
-        <input
-          className="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder={disabled ? "Finish editing to use chat" : "Ask a question or request an expansion..."}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          disabled={isLoading || disabled}
-        />
-        <button
-          type="submit"
-          disabled={isLoading || disabled || !input.trim()}
-          className="px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-sm text-white"
-        >
-          Send
-        </button>
+      <form onSubmit={handleSend} className="p-3 border-t border-line">
+        <div className="relative">
+          <input
+            className="input rounded-xl py-2.5 pr-12 text-sm"
+            placeholder={disabled ? "Finish editing to use chat" : "Ask a question or request an expansion…"}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={isLoading || disabled}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || disabled || !input.trim()}
+            aria-label="Send"
+            title="Send"
+            className="btn btn-primary btn-icon absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg"
+          >
+            <SendIcon size={15} />
+          </button>
+        </div>
       </form>
     </aside>
   );
@@ -753,7 +836,10 @@ export default function ArticleView({ article: initialArticle, articleId, pastHi
   // Identifies this page load; every persisted change overwrites this session's snapshot.
   const [session] = useState(() => ({ id: crypto.randomUUID(), startedAt: Date.now() }));
   const [highlightedHeadings, setHighlightedHeadings] = useState([]);
-  const [isChatMinimized, setIsChatMinimized] = useState(false);
+  // null = default (docked open on xl, closed on smaller screens); see chatWrapperClass.
+  const [isChatOpen, setIsChatOpen] = useState(null);
+  // Contents drawer, only used below lg where the sidebar isn't docked.
+  const [isNavOpen, setIsNavOpen] = useState(false);
   const [sources, setSources] = useState([]);
   // Non-null while in edit mode: a working copy of the article, committed to
   // history as a single entry on confirm or discarded on cancel.
@@ -917,25 +1003,80 @@ export default function ArticleView({ article: initialArticle, articleId, pastHi
     };
   }, [article?.sourceTopics]);
 
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key !== "Escape") return;
+      setIsNavOpen(false);
+      // Only collapse the chat if it was explicitly opened as a drawer.
+      setIsChatOpen((open) => (open ? false : open));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   if (!article || !Array.isArray(article.sections)) return null;
 
+  const canUndo = !isEditing && historyIndex > 0;
+  const canRedo = !isEditing && historyIndex < history.length - 1;
+
+  // isChatOpen === null means "not chosen yet": CSS decides (docked open on xl,
+  // closed behind the floating button below), so there's no flash on hydration.
+  const chatWrapperClass =
+    isChatOpen === null ? "hidden xl:block" : isChatOpen ? "block" : "hidden";
+  const fabClass = isChatOpen === null ? "xl:hidden" : isChatOpen ? "hidden" : "";
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
-      <div className="flex w-full">
-        <div
-          className={`${
-            isChatMinimized ? "w-full" : "w-3/5"
-          } flex gap-10 px-8 py-10 transition-[width] duration-300`}
+    <div className="min-h-screen">
+      {/* Top bar below lg, where the sidebar collapses into a drawer */}
+      <div className="sticky top-0 z-30 flex h-14 items-center gap-1 border-b border-line bg-canvas/85 px-2 backdrop-blur sm:px-4 lg:hidden">
+        <button
+          onClick={() => setIsNavOpen(true)}
+          aria-label="Open contents"
+          aria-expanded={isNavOpen}
+          className="btn btn-ghost"
         >
-          <div className="sticky top-10 self-start w-56 flex-shrink-0">
+          <MenuIcon size={16} />
+          Contents
+        </button>
+        <Link href="/" className="btn btn-ghost btn-icon" aria-label="Back to search" title="Back to search">
+          <ArrowLeftIcon size={16} />
+        </Link>
+        <div className="ml-auto flex items-center gap-0.5">
+          <button onClick={handleUndo} disabled={!canUndo} aria-label="Undo last change" title="Undo" className="btn btn-ghost btn-icon">
+            <UndoIcon size={16} />
+          </button>
+          <button onClick={handleRedo} disabled={!canRedo} aria-label="Redo last undone change" title="Redo" className="btn btn-ghost btn-icon">
+            <RedoIcon size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Drawer backdrops (below the breakpoint where each panel docks) */}
+      {isNavOpen && (
+        <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[2px] lg:hidden" onClick={() => setIsNavOpen(false)} />
+      )}
+      {isChatOpen && (
+        <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[2px] xl:hidden" onClick={() => setIsChatOpen(false)} />
+      )}
+
+      <div className="flex w-full">
+        <div className="flex min-w-0 flex-1 justify-center gap-10 px-4 py-6 sm:px-6 lg:px-8 lg:py-10 xl:gap-12">
+          <div
+            className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] flex-shrink-0 overflow-y-auto border-r border-line bg-surface p-6 shadow-xl transition-[transform,visibility] duration-200 ${
+              isNavOpen ? "translate-x-0" : "invisible -translate-x-full"
+            } lg:visible lg:sticky lg:top-10 lg:bottom-auto lg:z-auto lg:w-56 lg:max-w-none lg:max-h-[calc(100vh-5rem)] lg:translate-x-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:pr-2 lg:pb-4 lg:shadow-none`}
+          >
+            <div className="mb-2 flex justify-end lg:hidden">
+              <button onClick={() => setIsNavOpen(false)} aria-label="Close contents" className="btn btn-ghost btn-icon -mr-2">
+                <XIcon size={16} />
+              </button>
+            </div>
             <BackButton />
-            <UndoRedoControls
-              canUndo={!isEditing && historyIndex > 0}
-              canRedo={!isEditing && historyIndex < history.length - 1}
-              onUndo={handleUndo}
-              onRedo={handleRedo}
+            <UndoRedoControls canUndo={canUndo} canRedo={canRedo} onUndo={handleUndo} onRedo={handleRedo} />
+            <TableOfContents
+              sections={isEditing ? draft.sections : article.sections}
+              onNavigate={() => setIsNavOpen(false)}
             />
-            <TableOfContents sections={isEditing ? draft.sections : article.sections} />
             <UsedTopics topics={article.sourceTopics} />
             <Sources sources={sources} />
             <EditHistory history={history} historyIndex={historyIndex} onJump={jumpToHistory} />
@@ -964,26 +1105,29 @@ export default function ArticleView({ article: initialArticle, articleId, pastHi
             />
           )}
         </div>
-        <div className={isChatMinimized ? "hidden" : "w-2/5 px-8 py-10"}>
+        {/* Drawer below xl (full-width on phones), docked column on xl */}
+        <div
+          className={`${chatWrapperClass} fixed inset-y-0 right-0 z-50 w-full sm:w-[26rem] sm:p-3 xl:static xl:z-auto xl:flex-shrink-0 xl:p-0 xl:py-6 xl:pr-6`}
+        >
           <ArticleChatPanel
             articleId={articleId}
             article={article}
             onArticleUpdate={handleArticleUpdate}
-            onMinimize={() => setIsChatMinimized(true)}
+            onMinimize={() => setIsChatOpen(false)}
             onBusyChange={setIsChatBusy}
             disabled={isEditing}
           />
         </div>
       </div>
 
-      {isChatMinimized && (
-        <button
-          onClick={() => setIsChatMinimized(false)}
-          className="fixed bottom-6 right-6 flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 text-sm font-medium shadow-lg transition-colors"
-        >
-          Ask about this article
-        </button>
-      )}
+      <button
+        onClick={() => setIsChatOpen(true)}
+        aria-label="Ask about this article"
+        className={`${fabClass} btn btn-primary fixed bottom-4 right-4 z-30 rounded-full p-3.5 shadow-lg shadow-accent/25 hover:-translate-y-0.5 transition-all sm:bottom-6 sm:right-6 sm:px-4 sm:py-3`}
+      >
+        <ChatIcon size={16} />
+        <span className="hidden sm:inline">Ask about this article</span>
+      </button>
     </div>
   );
 }

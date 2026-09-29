@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getUserId } from "../../lib/getUserId";
+import { BookmarkIcon, XIcon } from "./icons";
 
 export default function RecentArticles() {
   const [articles, setArticles] = useState([]);
@@ -43,10 +44,15 @@ export default function RecentArticles() {
 
   if (loading) {
     return (
-      <div className="mt-8 w-full max-w-xl animate-pulse space-y-2">
-        <div className="h-3 w-32 bg-gray-800 rounded" />
-        <div className="h-3 w-48 bg-gray-800 rounded" />
-        <div className="h-3 w-40 bg-gray-800 rounded" />
+      <div className="mt-12 w-full animate-pulse">
+        <div className="h-3 w-28 rounded bg-subtle mb-4" />
+        <div className="card divide-y divide-line">
+          {[48, 64, 40].map((w) => (
+            <div key={w} className="px-4 py-3.5">
+              <div className="h-3 rounded bg-subtle" style={{ width: `${w}%` }} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -54,28 +60,28 @@ export default function RecentArticles() {
   if (!articles.length) return null;
 
   return (
-    <div className="mt-8 w-full max-w-xl">
-      <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-        Saved Articles
-      </h2>
-      <ul className="space-y-2">
+    <div className="mt-12 w-full">
+      <h2 className="label mb-3">Saved articles</h2>
+      <ul className="card divide-y divide-line overflow-hidden">
         {articles.map((article) => (
           <li
             key={article.articleId}
-            className="flex items-center justify-between group"
+            className="flex items-center justify-between group hover:bg-subtle/60 transition-colors"
           >
             <Link
               href={`/article/${article.articleId}`}
-              className="text-gray-200 hover:text-white hover:underline transition-colors"
+              className="flex flex-1 min-w-0 items-center gap-3 px-4 py-3 text-sm text-ink"
             >
-              {article.title}
+              <BookmarkIcon size={15} className="text-ink-faint group-hover:text-accent transition-colors" />
+              <span className="truncate">{article.title}</span>
             </Link>
             <button
               onClick={() => handleRemove(article.articleId)}
-              className="text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-2"
+              className="btn btn-ghost btn-icon mr-2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 hover:text-danger"
               aria-label={`Remove ${article.title}`}
+              title="Remove from saved"
             >
-              ✕
+              <XIcon size={14} />
             </button>
           </li>
         ))}

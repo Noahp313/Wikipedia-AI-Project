@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { getUserId } from "../lib/getUserId";
 import RecentArticles from "../app/components/RecentArticles";
 import PipelineSteps from "../app/components/PipelineSteps";
+import { LogoMark, SearchIcon, SpinnerIcon } from "../app/components/icons";
 
 export default function Home() {
   const [query, setQuery] = useState("");
@@ -152,56 +153,83 @@ export default function Home() {
     }
   };
 
+  const isRunning = pipelineStep !== null && pipelineStep !== "done" && failedStep === null;
+
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-10 bg-gray-900 text-white">
-      <h1 className="text-5xl font-bold tracking-tight">Wikipedia AI</h1>
+    <main className="min-h-screen flex flex-col">
+      <header className="flex items-center gap-2.5 px-4 py-4 sm:px-6 sm:py-5">
+        <LogoMark size={26} />
+        <span className="text-sm font-semibold tracking-tight text-ink">Wikipedia AI</span>
+      </header>
 
-      <p className="mt-4 text-gray-300 text-center max-w-md">
-        Ask anything. Get structured, Wikipedia-style explanations instantly.
-      </p>
+      <div className="flex-1 flex flex-col items-center px-4 pt-[8vh] pb-16 sm:px-6 sm:pt-[14vh] sm:pb-20">
+        <h1 className="text-3xl sm:text-5xl font-semibold tracking-tight text-ink text-center">
+          What do you want to learn?
+        </h1>
 
-      <div className="mt-8 w-full max-w-xl">
-        <input
-          className="w-full p-4 border border-gray-700 bg-gray-800 text-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Search a topic..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleSearch}
-        />
-      </div>
+        <p className="mt-4 text-ink-muted text-center max-w-md text-[15px] leading-relaxed">
+          Ask anything. Get structured, Wikipedia-style explanations instantly.
+        </p>
 
-      {errorMessage && (
-        <p className="mt-4 text-red-400 text-sm max-w-xl text-center">{errorMessage}</p>
-      )}
-
-      {pipelineStep && pipelineStep !== "done" && (
-        <div className="mt-6 w-full max-w-xl">
-          <PipelineSteps
-            currentStep={pipelineStep}
-            failedStep={failedStep}
-            devStatus={devStatus}
-          />
-        </div>
-      )}
-
-      <RecentArticles />
-
-      {foundTopics.length > 0 && (
-        <div className="mt-8 w-full max-w-xl">
-          <p className="text-gray-400 text-sm mb-2">Found topics:</p>
-          <div className="flex flex-wrap gap-2">
-            {foundTopics.map((topic, i) => (
-              <button
-                key={i}
-                onClick={() => console.log(`Go to ${topic}`)}
-                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded-full text-sm cursor-pointer"
-              >
-                {topic}
-              </button>
-            ))}
+        <div className="mt-8 w-full max-w-xl sm:mt-10">
+          <div className="group relative">
+            <SearchIcon
+              size={18}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-faint group-focus-within:text-accent transition-colors"
+            />
+            <input
+              className="input h-14 rounded-2xl pl-11 pr-14 text-base shadow-[0_2px_12px_-4px_rgb(var(--shadow-color)/0.12)]"
+              placeholder="Search a topic, or ask a question…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleSearch}
+              autoFocus
+            />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+              {isRunning ? (
+                <SpinnerIcon size={18} className="text-accent" />
+              ) : (
+                <kbd className="rounded-md border border-line bg-subtle px-1.5 py-0.5 font-sans text-xs text-ink-faint">
+                  ↵
+                </kbd>
+              )}
+            </span>
           </div>
+
+          {errorMessage && (
+            <p className="mt-4 rounded-lg bg-danger-soft px-3.5 py-2.5 text-sm text-danger">{errorMessage}</p>
+          )}
+
+          {pipelineStep && pipelineStep !== "done" && (
+            <div className="mt-6">
+              <PipelineSteps
+                currentStep={pipelineStep}
+                failedStep={failedStep}
+                devStatus={devStatus}
+              />
+            </div>
+          )}
+
+          {foundTopics.length > 0 && (
+            <div className="mt-6">
+              <p className="label mb-2.5">Found topics</p>
+              <div className="flex flex-wrap gap-2">
+                {foundTopics.map((topic, i) => (
+                  <button
+                    key={i}
+                    onClick={() => console.log(`Go to ${topic}`)}
+                    className="rounded-full border border-line bg-surface px-3 py-1 text-sm text-ink-muted hover:border-accent/40 hover:bg-accent-soft hover:text-accent-ink transition-colors cursor-pointer"
+                  >
+                    {topic}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <RecentArticles />
         </div>
-      )}
+      </div>
     </main>
   );
 }
