@@ -7,7 +7,7 @@ import remarkMath from "remark-math";
 import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { isWikimediaUrl, repairLatexEscapes, trimIncompleteMarkdown } from "../../lib/markdown";
+import { isWikimediaUrl, normalizeDisplayMath, repairLatexEscapes, trimIncompleteMarkdown } from "../../lib/markdown";
 import MermaidDiagram from "./MermaidDiagram";
 
 const remarkPlugins = [
@@ -99,7 +99,7 @@ export default function MarkdownContent({ children, streaming = false, images = 
   // Stable per image menu: new component types each render would remount
   // diagrams (re-running Mermaid) and drop text selections/highlights
   const components = useMemo(() => buildComponents(Array.isArray(images) ? images : []), [images]);
-  let source = repairLatexEscapes(typeof children === "string" ? children : "");
+  let source = normalizeDisplayMath(repairLatexEscapes(typeof children === "string" ? children : ""));
   if (streaming) source = trimIncompleteMarkdown(source);
 
   return (

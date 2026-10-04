@@ -3,7 +3,9 @@
 // credit line. These are the only images an article may show — the model picks
 // from this list by number and never supplies URLs itself.
 
-const USER_AGENT = "WikAi/1.0 (noahp0313@outlook.com)";
+import { WIKI_USER_AGENT } from "./wikiUserAgent";
+
+const USER_AGENT = WIKI_USER_AGENT;
 const MAX_PER_ARTICLE = 8;
 const THUMB_WIDTH = 800;
 

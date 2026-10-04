@@ -1,7 +1,8 @@
 import { callGemini } from "./geminiClient";
+import { WIKI_USER_AGENT } from "./wikiUserAgent";
 
 const WIKI_API = "https://en.wikipedia.org/w/api.php";
-const USER_AGENT = "WikAi/1.0 (noahp0313@outlook.com)";
+const USER_AGENT = WIKI_USER_AGENT;
 const PICKER_MODEL = "gemini-3.1-flash-lite";
 
 export async function fetchWikipediaContent(topic) {

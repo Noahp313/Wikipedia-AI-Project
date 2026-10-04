@@ -53,7 +53,7 @@ export function markdownGuidelines(policy) {
 ${tables}
 ${charts}
 ${images}- Never use headings (#), links, image URLs or HTML inside content — each section already has its own heading.
-- This is JSON: escape every LaTeX backslash as \\\\ (write "\\\\frac", "\\\\theta", "\\\\nabla") and newlines as \\n.`;
+- Backslashes: in the text the reader ends up with, every LaTeX command has exactly ONE backslash ($\\frac{a}{b}$, $\\leq$, $\\mathbb{R}$). Because this is JSON, you type that one backslash as two in the raw output: "\\\\frac", "\\\\leq", "\\\\mathbb{R}". Never type four ("\\\\\\\\leq") — that shows up as broken text. Newlines are typed as \\n.`;
 }
 
 // Images are only ever shown from Wikimedia's own hosts (full files and thumbnails).
@@ -92,16 +92,62 @@ const MATH_SPAN = /\$\$[\s\S]*?\$\$|\$(?:[^$\n]|\n(?!\n))*?\$/g;
 const BROKEN_NEWLINE =
   /\n(?=(?:abla|eq|e|u|ot|i|leq|geq|mid|parallel|subset|subseteq|exists|ewline|atural|ormalsize)(?![a-zA-Z]))/g;
 
+// The opposite mistake: escaping twice, so the text holds "\\leq" instead of
+// "\leq". KaTeX reads "\\" as a line break, and the formula falls apart into
+// words ("leq", "mathbb"). A span with a doubled command (two backslashes
+// before a 2+ letter name — a real line break is followed by a space, digit or
+// single letter) is doubled throughout, so every backslash run is halved,
+// which also turns its intended line breaks ("\\\\") back into "\\".
+const DOUBLED_COMMAND = /\\\\[a-zA-Z]{2,}/;
+
+function undoubleBackslashes(span) {
+  if (!DOUBLED_COMMAND.test(span)) return span;
+  return span.replace(/\\+/g, (run) => "\\".repeat(Math.ceil(run.length / 2)));
+}
+
 export function repairLatexEscapes(markdown) {
   if (typeof markdown !== "string" || !markdown.includes("$")) return markdown;
   return markdown.replace(MATH_SPAN, (span) =>
-    span
-      .replace(/\t/g, "\\t")
-      .replace(/\f/g, "\\f")
-      .replace(/\r/g, "\\r")
-      .replace(/\x08/g, "\\b")
-      .replace(BROKEN_NEWLINE, "\\n")
+    undoubleBackslashes(
+      span
+        .replace(/\t/g, "\\t")
+        .replace(/\f/g, "\\f")
+        .replace(/\r/g, "\\r")
+        .replace(/\x08/g, "\\b")
+        .replace(BROKEN_NEWLINE, "\\n")
+    )
   );
+}
+
+// A line holding only "$$…$$" is meant as a display equation, but when it
+// follows text without a blank line, Markdown makes it part of that paragraph
+// and it renders as small inline math. Rewrites each such line as a fenced
+// block ("$$" / formula / "$$") in its own paragraph — indented to stay inside
+// a list item when it sits under one.
+const DISPLAY_LINE = /^([ \t]*)\$\$(.+?)\$\$[ \t]*$/;
+const LIST_ITEM = /^([ \t]*)([*+-]|\d+[.)])[ \t]+/;
+
+export function normalizeDisplayMath(markdown) {
+  if (typeof markdown !== "string" || !markdown.includes("$$")) return markdown;
+  const lines = markdown.split("\n");
+  const out = [];
+  let listIndent = null; // content indent of the list item we're in, if any
+
+  for (const line of lines) {
+    const item = line.match(LIST_ITEM);
+    if (item) listIndent = item[0].length;
+    else if (line.trim() && !/^[ \t]/.test(line) && !DISPLAY_LINE.test(line) && out.at(-1)?.trim() === "") listIndent = null;
+
+    const display = line.match(DISPLAY_LINE);
+    if (!display || item) {
+      out.push(line);
+      continue;
+    }
+    const indent = display[1] || (listIndent ? " ".repeat(listIndent) : "");
+    if (out.length && out.at(-1).trim() !== "") out.push("");
+    out.push(`${indent}$$`, `${indent}${display[2].trim()}`, `${indent}$$`, "");
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 const IMAGE_REF = /!\[([^\]\n]*)\]\(image:(\d+)\)/g;
